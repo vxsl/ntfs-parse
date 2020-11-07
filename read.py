@@ -1,20 +1,17 @@
-import sys, time, gzip
-import io
-import zlib
-import gzip
-import re
-import os, time
+import time, os, zlib
+from shutil import disk_usage
 import config
 from PerformanceCalc import PerformanceCalc
-import shutil
-
+from PyQt5 import QtCore
+from PyQt5 import *
+from PyQt5.QtWidgets import *
+from threading import Thread
 
 def parseAls(tmpFileName):
     print("trying to parse a .als file in ", tmpFileName, " ...")
     tmpFile = open(tmpFileName, "rb")
 
     try:
-
         unzipper = zlib.decompressobj(32 + zlib.MAX_WBITS)
         unzipped = unzipper.decompress(tmpFile.read())   
         split = unzipped.split(b'<')
@@ -41,38 +38,89 @@ def parseAls(tmpFileName):
         os.remove(tmpFileName)
         print("Decompression failed: " + e.args[0])
         return
+
+class DiskReader(QtCore.QObject):
     
-#diskPath = r"\\."
-#diskPath += "\\" + config.LOGICAL_VOLUME + ":"
-diskPath = r"\\.\D:"
+    progressUpdate = QtCore.pyqtSignal(float)
+    def __init__(self):
+        super().__init__()
+        self.diskPath = r"\\." + "\\" + config.LOGICAL_VOLUME + ":"
+        #diskPath = r"\\.\D:"
+        disk = os.open(self.diskPath, os.O_RDONLY | os.O_BINARY)
+        self.diskFd = os.fdopen(disk, 'rb')
+        self.diskSize = disk_usage(config.LOGICAL_VOLUME + ':\\')
+        self.perf = PerformanceCalc(self.diskFd)
+        self.startAddr = -1
 
-disk = os.open(diskPath, os.O_RDONLY | os.O_BINARY)
-fileObj = os.fdopen(disk, 'rb')
 
-perf = PerformanceCalc(disk, fileObj)
+    def main(self):
+        sectorCount = 0
 
-blockInProgress = -1
+        while True:
+            start = time.perf_counter()
+            data = self.diskFd.read(512)
+            stop = time.perf_counter()
+            self.perf.iteration(stop - start)
 
-while True:
-    start = time.perf_counter()
-    #data = os.read(disk, 512)    
-    data = fileObj.read(512)
-    stop = time.perf_counter()
-    perf.iteration(stop - start)
+            if data.hex()[0:16] == "1f8b080000000000":
+                if self.startAddr != -1:
+                    f.close()
+                    parseAls(f.name)
+                f = open("block" + hex(self.diskFd.tell() - 512)+".tmp", "wb")    
+                self.startAddr = self.diskFd.tell() - 512
+                sectorCount = 0               
 
-    if data.hex()[0:16] == "1f8b080000000000":
-        if blockInProgress != -1:
-            f.close()
-            parseAls(f.name)
-            #print("\ngzip signature found at address ", hex(disk.tell() - 8), " -- possible .als file")        
-        f = open("block" + hex(fileObj.tell() - 512)+".tmp", "wb")    
-        blockInProgress = fileObj.tell() - 512
-            
+            if self.startAddr != -1:
+                if sectorCount < 1000000000:
+                    f.write(data)
+                    sectorCount += 1
+                else:
+                    f.close()
+                    os.remove(f.name)
+                    sectorCount = 0
+                    self.startAddr = -1
+            self.progressUpdate.emit(self.diskFd.tell())
 
-    if blockInProgress != -1:
-        f.write(data)
-            
-    #print(data.hex())
-    #print(hex(fileObj.tell()))
+            #print(data.hex())
+            #print(hex(fileObj.tell()))
 
+class mainWindow(QWidget):
+    def __init__(self):
+        super().__init__()       
+        print("hereee")
+        self.progressBar = QProgressBar()
+        self.progressBar.setTextVisible(False)
+        #progressBar.setGeometry(30,40,1000,25)
+        self.start = QPushButton('Start')
+        self.start.clicked.connect(self.startProgress)
+        self.msg = QLabel('test')
+        #msg.move(100, 15)
+
+        layout = QGridLayout()
+        #layout.addWidget(progressBar)
+        layout.addWidget(self.start, 2, 0)
+        layout.addWidget(self.progressBar, 1, 0, 1, 3)
+        layout.addWidget(self.msg, 0, 2)
+
+        self.setLayout(layout)
+
+        self.reader = DiskReader()
+        self.reader.progressUpdate.connect(self.updateProgress)
+
+    def updateProgress(self, progress):
+        self.msg.setText("{:.5f}".format(progress / self.reader.diskSize.total) + "%")
+        self.progressBar.setValue(progress / self.reader.diskSize.total)     
+
+    def startProgress(self):        
+        Thread(target=self.reader.main).start()
+    
+    
+app = QApplication([])
+
+window = mainWindow()
+window.setWindowTitle('ntfs-parse')
+window.setGeometry(500, 500, 1000, 1000)
+
+window.show()
+app.exec_()
 
