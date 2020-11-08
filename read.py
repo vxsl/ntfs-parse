@@ -19,29 +19,31 @@ def parseAls(tmpFileName):
             #print("not an XML file")
             tmpFile.close()
             os.remove(tmpFileName)
-            return
+            return 1
         else:            
             if split[2][0:7] != b"Ableton":
                 #print("not a .als file")
                 os.remove(tmpFileName)
-                return
+                return 1
             else:                
-                als = open(tmpFileName.split(".")[0]+".als", "wb")    
+                als = open("results/" + tmpFileName.split("/")[1].split(".")[0] +".als", "wb")    
                 als.write(unzipped)
                 als.close()
                 tmpFile.close()            
                 os.remove(tmpFileName)
                 print("Success: " + als.name)
+                return 0
     
     except Exception as e:
         tmpFile.close()            
         os.remove(tmpFileName)
-        print("Decompression failed: " + e.args[0])
-        return
+        print("Decompression failed: " + str(e.args[0]))
+        return 1
 
 class DiskReader(QtCore.QObject):
     
-    progressUpdate = QtCore.pyqtSignal(float)
+    progressUpdate = QtCore.pyqtSignal(object)
+    successUpdate = QtCore.pyqtSignal(object)
     def __init__(self):
         super().__init__()
         self.diskPath = r"\\." + "\\" + config.LOGICAL_VOLUME + ":"
@@ -51,9 +53,15 @@ class DiskReader(QtCore.QObject):
         self.diskSize = disk_usage(config.LOGICAL_VOLUME + ':\\')
         self.perf = PerformanceCalc(self.diskFd)
         self.startAddr = -1
+        self.successCount = [0, 0]
 
 
     def main(self):
+        
+        if not os.path.exists('tmp'):
+            os.makedirs('tmp')
+        if not os.path.exists('results'):
+            os.makedirs('results')
         sectorCount = 0
 
         while True:
@@ -65,8 +73,12 @@ class DiskReader(QtCore.QObject):
             if data.hex()[0:16] == "1f8b080000000000":
                 if self.startAddr != -1:
                     f.close()
-                    parseAls(f.name)
-                f = open("block" + hex(self.diskFd.tell() - 512)+".tmp", "wb")    
+                    if parseAls(f.name) == 0:
+                        self.successCount[0] += 1
+                    else:
+                        self.successCount[1] += 1
+                    self.successUpdate.emit(self.successCount)
+                f = open("tmp/block" + hex(self.diskFd.tell() - 512)+".tmp", "wb")    
                 self.startAddr = self.diskFd.tell() - 512
                 sectorCount = 0               
 
@@ -79,7 +91,7 @@ class DiskReader(QtCore.QObject):
                     os.remove(f.name)
                     sectorCount = 0
                     self.startAddr = -1
-            self.progressUpdate.emit(self.diskFd.tell())
+            self.progressUpdate.emit([self.diskFd.tell(), self.perf.avg])
 
             #print(data.hex())
             #print(hex(fileObj.tell()))
@@ -93,26 +105,40 @@ class mainWindow(QWidget):
         #progressBar.setGeometry(30,40,1000,25)
         self.start = QPushButton('Start')
         self.start.clicked.connect(self.startProgress)
-        self.msg = QLabel('test')
-        #msg.move(100, 15)
+        self.progressPercentage = QLabel()
+        self.sectorAverage = QLabel()
+        self.fails = QLabel()
+        self.successes = QLabel()
+        #progressPercentage.move(100, 15)
 
         layout = QGridLayout()
         #layout.addWidget(progressBar)
-        layout.addWidget(self.start, 2, 0)
-        layout.addWidget(self.progressBar, 1, 0, 1, 3)
-        layout.addWidget(self.msg, 0, 2)
+        layout.addWidget(self.progressPercentage, 0, 2)
+        layout.addWidget(self.sectorAverage, 1, 2)
+        layout.addWidget(self.fails, 2, 2)
+        layout.addWidget(self.successes, 3, 2)        
+        layout.addWidget(self.progressBar, 4, 0, 4, 3)        
+        layout.addWidget(self.start, 9, 0)
 
         self.setLayout(layout)
 
         self.reader = DiskReader()
         self.reader.progressUpdate.connect(self.updateProgress)
+        self.reader.successUpdate.connect(self.updateSuccessCount)
+
+    def updateSuccessCount(self, successCount):
+        self.fails.setText("Failures: " + str(successCount[1]))
+        self.successes.setText("Successes: " + str(successCount[0]))
 
     def updateProgress(self, progress):
-        self.msg.setText("{:.5f}".format(progress / self.reader.diskSize.total) + "%")
-        self.progressBar.setValue(progress / self.reader.diskSize.total)     
+        self.progressPercentage.setText("{:.9f}".format(progress[0] / self.reader.diskSize.total) + "%")
+        self.sectorAverage.setText("Average time per sector read: " + "{:.2f}".format(progress[1]) + " μs")
+        self.progressBar.setValue(progress[0] / self.reader.diskSize.total)     
 
     def startProgress(self):        
         Thread(target=self.reader.main).start()
+        self.start.setText('...')
+        self.start.setDisabled(True)
     
     
 app = QApplication([])
