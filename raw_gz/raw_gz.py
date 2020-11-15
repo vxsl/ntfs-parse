@@ -1,14 +1,14 @@
-import time, os, zlib
+import time, os, zlib, string
 from shutil import disk_usage
-import config
 from PerformanceCalc import PerformanceCalc
 from PyQt5 import QtCore
 from PyQt5 import *
 from PyQt5.QtWidgets import *
 from threading import Thread
 
-def parseAls(tmpFileName):
-    print("trying to parse a .als file in ", tmpFileName, " ...")
+# returns 0 for success, 1 otherwise
+def readGzip(tmpFileName):
+    print("trying to read a .gzip archive in ", tmpFileName, " ...")
     tmpFile = open(tmpFileName, "rb")
 
     try:
@@ -37,82 +37,92 @@ def parseAls(tmpFileName):
     except Exception as e:
         tmpFile.close()            
         os.remove(tmpFileName)
-        print("Decompression failed: " + str(e.args[0]))
+        #print("Decompression failed: " + str(e.args[0]))
         return 1
 
 class DiskReader(QtCore.QObject):
     
+    # PyQt event signallers
     progressUpdate = QtCore.pyqtSignal(object)
     successUpdate = QtCore.pyqtSignal(object)
-    def __init__(self):
+
+    def __init__(self, vol):
         super().__init__()
-        self.diskPath = r"\\." + "\\" + config.LOGICAL_VOLUME + ":"
-        #diskPath = r"\\.\D:"
+        self.diskPath = r"\\." + "\\" + vol + ":"
         disk = os.open(self.diskPath, os.O_RDONLY | os.O_BINARY)
         self.diskFd = os.fdopen(disk, 'rb')
-        self.diskSize = disk_usage(config.LOGICAL_VOLUME + ':\\')
+        self.diskSize = disk_usage(vol + ':\\')
         self.perf = PerformanceCalc(self.diskFd)
-        self.startAddr = -1
         self.successCount = [0, 0]
 
+    def main(self):        
 
-    def main(self):
-        
+        #create required directories
         if not os.path.exists('tmp'):
             os.makedirs('tmp')
         if not os.path.exists('results'):
             os.makedirs('results')
-        sectorCount = 0
 
+        # TODO instead of capping it like this, just remove current gb from RAM and keep going? How do we determine whether to keep going...? Hmm...
+        currentSequentialSectors = 0    # no potential file should be larger than, let's say, 1 GB. This variable will keep track of this to prevent the program from endlessly searching, or se for the next occurrence of the .gzip start marker. 
+        currentGzipStart = -1
+
+        # start at position in bytes
+        self.diskFd.seek(int('1bdff6f9000', 16))
+
+        # main loop
         while True:
             start = time.perf_counter()
             data = self.diskFd.read(512)
             stop = time.perf_counter()
             self.perf.iteration(stop - start)
 
+            # TODO is there a sensible way of multithreading the parsing?
             if data.hex()[0:16] == "1f8b080000000000":
-                if self.startAddr != -1:
+                if currentGzipStart != -1:
                     f.close()
-                    if parseAls(f.name) == 0:
+                    if readGzip(f.name) == 0:
                         self.successCount[0] += 1
                     else:
                         self.successCount[1] += 1
                     self.successUpdate.emit(self.successCount)
                 f = open("tmp/block" + hex(self.diskFd.tell() - 512)+".tmp", "wb")    
-                self.startAddr = self.diskFd.tell() - 512
-                sectorCount = 0               
+                currentGzipStart = self.diskFd.tell() - 512
+                currentSequentialSectors = 0               
 
-            if self.startAddr != -1:
-                if sectorCount < 1000000000:
+            if currentGzipStart != -1:
+                if currentSequentialSectors < 1000000000:
                     f.write(data)
-                    sectorCount += 1
+                    currentSequentialSectors += 1
                 else:
                     f.close()
                     os.remove(f.name)
-                    sectorCount = 0
-                    self.startAddr = -1
+                    currentSequentialSectors = 0
+                    currentGzipStart = -1
             self.progressUpdate.emit([self.diskFd.tell(), self.perf.avg])
 
-            #print(data.hex())
-            #print(hex(fileObj.tell()))
 
-class mainWindow(QWidget):
-    def __init__(self):
-        super().__init__()       
-        print("hereee")
+
+class MainWindow(QWidget):
+    def __init__(self, selected_vol):
+        super().__init__()      
+
+        """ dlg = StartDialog()
+        dlg.exec()
+
+        selected_vol = dlg.vol_select_dropdown.currentText()[0]
+        print("selected " + selected_vol) """
+
         self.progressBar = QProgressBar()
         self.progressBar.setTextVisible(False)
-        #progressBar.setGeometry(30,40,1000,25)
         self.start = QPushButton('Start')
         self.start.clicked.connect(self.startProgress)
         self.progressPercentage = QLabel()
         self.sectorAverage = QLabel()
         self.fails = QLabel()
         self.successes = QLabel()
-        #progressPercentage.move(100, 15)
 
         layout = QGridLayout()
-        #layout.addWidget(progressBar)
         layout.addWidget(self.progressPercentage, 0, 2)
         layout.addWidget(self.sectorAverage, 1, 2)
         layout.addWidget(self.fails, 2, 2)
@@ -122,31 +132,22 @@ class mainWindow(QWidget):
 
         self.setLayout(layout)
 
-        self.reader = DiskReader()
+        self.reader = DiskReader(selected_vol)
         self.reader.progressUpdate.connect(self.updateProgress)
         self.reader.successUpdate.connect(self.updateSuccessCount)
+        
 
     def updateSuccessCount(self, successCount):
         self.fails.setText("Failures: " + str(successCount[1]))
         self.successes.setText("Successes: " + str(successCount[0]))
 
     def updateProgress(self, progress):
-        self.progressPercentage.setText("{:.9f}".format(progress[0] / self.reader.diskSize.total) + "%")
+        self.progressPercentage.setText("{:.7f}".format(100 * progress[0] / self.reader.diskSize.total) + "%")
         self.sectorAverage.setText("Average time per sector read: " + "{:.2f}".format(progress[1]) + " μs")
-        self.progressBar.setValue(progress[0] / self.reader.diskSize.total)     
+        self.progressBar.setValue(100 * progress[0] / self.reader.diskSize.total)     
 
     def startProgress(self):        
         Thread(target=self.reader.main).start()
         self.start.setText('...')
         self.start.setDisabled(True)
     
-    
-app = QApplication([])
-
-window = mainWindow()
-window.setWindowTitle('ntfs-parse')
-window.setGeometry(500, 500, 1000, 1000)
-
-window.show()
-app.exec_()
-

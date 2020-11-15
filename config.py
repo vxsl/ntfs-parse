@@ -1,1 +1,0 @@
-LOGICAL_VOLUME = 'D'
