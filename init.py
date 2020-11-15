@@ -3,8 +3,8 @@ from PyQt5 import *
 from PyQt5.QtWidgets import *
 import string
 import os
-import raw_gz
-import recreate_file
+from raw_gz import raw_gz
+from recreate_file import recreate_file
 
 class StartDialog(QDialog):
     def __init__(self):

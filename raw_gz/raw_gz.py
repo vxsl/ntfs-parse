@@ -1,6 +1,6 @@
 import time, os, zlib, string
 from shutil import disk_usage
-from PerformanceCalc import PerformanceCalc
+from .performance.performance import PerformanceCalc
 from PyQt5 import QtCore
 from PyQt5 import *
 from PyQt5.QtWidgets import *
