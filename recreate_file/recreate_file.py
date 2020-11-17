@@ -6,24 +6,24 @@ from PyQt5 import *
 from PyQt5.QtWidgets import *
 from threading import Thread, Lock
 
+
 class DiskReader(QtCore.QObject):    
     
     # PyQt event signallers
     progressUpdate = QtCore.pyqtSignal(object)
     successUpdate = QtCore.pyqtSignal(object)
 
-    def check_block(self, inp, addr, callback):
-        for b in self.reference_file.blocks:
+    def check_sector(self, inp, addr):
+        for b in self.reference_file.sectors:
             if inp == b:
-                i = self.reference_file.blocks.index(b)
-                self.rebuilt[i] = copy.deepcopy(b)
-                callback(i, addr)
-        return None
-
-    def success(self, i, addr):
-        self.successUpdate.emit(i)
-        print("block at address " + str(addr) + " on disk is equal to block " + str(i) + " of reference file.") 
-
+                i = self.reference_file.sectors.index(b)
+                self.rebuilt[i] = (addr, copy.deepcopy(b))
+                self.successUpdate.emit(i)
+                self.log.write(str(addr) + "\t\t" + str(i) + "\n")
+                self.log.flush()
+                print("check_sector: sector at address " + str(addr) + " on disk is equal to sector " + str(i) + " of reference file.")
+                if i+1 == len(self.reference_file.sectors):
+                    self.finished = True
 
 
     def __init__(self, vol, reference_file):
@@ -35,7 +35,9 @@ class DiskReader(QtCore.QObject):
         self.perf = PerformanceCalc(self.diskFd)
         self.successCount = [0, 0]
         self.reference_file = reference_file
-        self.rebuilt = [None] * len(reference_file.blocks)
+        self.rebuilt = [None] * len(reference_file.sectors) 
+        self.finished = False
+        self.log = open(self.reference_file.name + "_" + str(time.time()*1000) + ".log", 'w')
         #self.main(start_at)
         
     def main(self, start_at):        
@@ -51,7 +53,7 @@ class DiskReader(QtCore.QObject):
         self.diskFd.seek(int(start_at, 16))
 
         # main loop
-        while True:
+        while not self.finished:
 
             lock.acquire()
             start = time.perf_counter()
@@ -59,8 +61,8 @@ class DiskReader(QtCore.QObject):
             stop = time.perf_counter()
             self.perf.iteration(stop - start)
 
-            Thread(target=self.check_block,args=[data, self.diskFd.tell(), self.success]).start()
-            #self.check_block(data, self.diskFd.tell(), self.success)
+            Thread(name='checking sector @'+hex(self.diskFd.tell() - 512),target=self.check_sector,args=[data, hex(self.diskFd.tell() - 512)]).start()
+            #self.check_sector(data, self.diskFd.tell(), self.success)
             lock.release()
 
             self.progressUpdate.emit([self.diskFd.tell(), self.perf.avg])
@@ -69,33 +71,35 @@ class ReferenceFile():
     def __init__(self, path):
         split = path.split('/')
         self.fd = open(path, "rb")
-        self.blocks = self.to_blocks(self.fd)
+        self.sectors = self.to_sectors(self.fd)
         self.size = os.stat(path).st_size
         self.dir = '/'.join(split[0:(len(split) - 1)])
         self.name = split[len(split) - 1]
 
-    def to_blocks(self, file):
+    def to_sectors(self, file):
         file.seek(0)
         result = []
         while True:
             cur = file.read(512)
-            if cur != b'':
+            if cur == b'':
+                break 
+            elif len(cur) == 512:
                 result.append(cur)
             else:
-                break
+                result.append(bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1])))   #trailing sector zfill
         return result
 
 
-class ReferenceFileDialog(QFileDialog):
+class ChooseReferenceFileDialog(QFileDialog):
     def __init__(self):
-        super(ReferenceFileDialog, self).__init__()
+        super(ChooseReferenceFileDialog, self).__init__()
         self.setWindowTitle("choose reference file")
 
 class MainWindow(QWidget):
     def __init__(self, selected_vol):
         super().__init__()      
 
-        dlg = ReferenceFileDialog()
+        dlg = ChooseReferenceFileDialog()
         dlg.exec()
         path = dlg.selectedFiles()[0]
 
@@ -153,15 +157,15 @@ class MainWindow(QWidget):
         self.start.setText('...')
         self.start.setDisabled(True)
         self.start_at.setDisabled(True)  
-        Thread(target=self.reader.main,args=[self.start_at.text().split("x")[1]]).start()  
+        Thread(name='recreate main',target=self.reader.main,args=[self.start_at.text().split("x")[1]]).start()  
 
     def updateSuccessCount(self, i):
         successCount = 0 
-        for block in self.reader.rebuilt:
-            if block != None:
+        for entry in self.reader.rebuilt:
+            if entry != None:
                 successCount += 1
         
-        self.successes.setText("Block " + str(i) + " rebuilt: " + str(successCount) + "/" + str(len(self.reader.rebuilt)))
+        self.successes.setText("sector " + str(i) + " rebuilt: " + str(successCount) + "/" + str(len(self.reader.rebuilt)))
         
     def updateProgress(self, progress):
         self.progressPercentage.setText("{:.7f}".format(100 * progress[0] / self.reader.diskSize.total) + "%")

@@ -86,7 +86,7 @@ class DiskReader(QtCore.QObject):
                     else:
                         self.successCount[1] += 1
                     self.successUpdate.emit(self.successCount)
-                f = open("tmp/block" + hex(self.diskFd.tell() - 512)+".tmp", "wb")    
+                f = open("tmp/sector" + hex(self.diskFd.tell() - 512)+".tmp", "wb")    
                 currentGzipStart = self.diskFd.tell() - 512
                 currentSequentialSectors = 0               
 
