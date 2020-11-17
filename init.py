@@ -20,13 +20,15 @@ class StartDialog(QDialog):
         self.vol_select_dropdown = QComboBox(self)
         
         self.vol_select_dropdown.addItems(vols)
+        self.vol_select_dropdown.setCurrentText("E:")    # TODO remove
         hbox1.addWidget(vol_select_label)
         hbox1.addWidget(self.vol_select_dropdown)
 
         hbox2 = QHBoxLayout()
         prog_select_label = QLabel("Program: ")
         self.prog_select_dropdown = QComboBox(self)
-        self.prog_select_dropdown.addItems(progs)
+        self.prog_select_dropdown.addItems(progs)        
+        self.prog_select_dropdown.setCurrentText("recreate file")  # TODO remove
         
         hbox2.addWidget(prog_select_label)
         hbox2.addWidget(self.prog_select_dropdown)
@@ -66,6 +68,6 @@ elif selected_prog == "recreate file":
     new_app = QApplication([])
     window = recreate_file.MainWindow(selected_vol)
     window.setWindowTitle('recreate_file')
-    window.setGeometry(500, 500, 1000, 1000)
+    window.setGeometry(500, 500, 500, 600)
     window.show()
     new_app.exec_()
