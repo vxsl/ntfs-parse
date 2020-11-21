@@ -6,25 +6,81 @@ from PyQt5 import *
 from PyQt5.QtWidgets import *
 from threading import Thread, Lock
 
+""" from pympler import tracker """
+
+""" def debug_trace(tr):
+    
+    tr.print_diff()
+    from PyQt5.QtCore import pyqtRemoveInputHook
+    from pdb import set_trace
+    import gc
+    import objgraph
+    pyqtRemoveInputHook()
+    set_trace()
+    objgraph.show_most_common_types()
+     """
+
+#def check_sector(inp, addr, reader):
+def check_sector():    
+    """ for b, found in reader.reference_file.sectors:
+        if inp == b:
+            if found == False:
+                i = reader.reference_file.sectors.index((b, found))
+                reader.rebuilt[i] = (addr, copy.deepcopy(b))
+                reader.successUpdate.emit(i)
+                reader.log.write(str(addr) + "\t\t" + str(i) + "\n")
+                reader.log.flush()
+                print("check_sector: sector at address " + str(addr) + " on disk is equal to sector " + str(i) + " of reference file.")
+                if i+1 == len(reader.reference_file.sectors):
+                    reader.finished = True
+            else:
+                print("Block " + str(i) + " was found at " + str(addr) + " but was already located at " + reader.rebuilt[i][1])
+            return """
+    return
+
+def recreate(reader, start_at):
+    debugstart = time.time()
+
+    lock = Lock()
+    #create required directories
+    if not os.path.exists('tmp'):
+        os.makedirs('tmp')
+    if not os.path.exists('results'):
+        os.makedirs('results')
+
+    # start position in bytes
+    reader.diskFd.seek(int(start_at, 16))
+
+    data = None
+    start = None
+    stop = None
+
+    #tr = tracker.SummaryTracker()
+
+    # main loop
+    while not reader.finished:
+        with lock:
+            start = time.perf_counter()
+            data = reader.diskFd.read(512)
+            stop = time.perf_counter()
+            reader.perf.iteration(stop - start)
+
+            #t = Thread(name='checking sector @'+hex(reader.diskFd.tell() - 512),target=check_sector,args=[data, hex(reader.diskFd.tell() - 512), reader])
+            t = Thread(name='checking sector @'+hex(reader.diskFd.tell() - 512),target=check_sector)
+            t.start()
+            t.join()
+            #t = Thread(target=check_sector)
+            #check_sector(data, hex(reader.diskFd.tell() - 512), reader)
+            
+            reader.progressUpdate.emit([reader.diskFd.tell(), reader.perf.avg])
+            """ if (time.time() - debugstart) > 15:
+                debug_trace(tr) """
 
 class DiskReader(QtCore.QObject):    
     
     # PyQt event signallers
     progressUpdate = QtCore.pyqtSignal(object)
     successUpdate = QtCore.pyqtSignal(object)
-
-    def check_sector(self, inp, addr):
-        for b in self.reference_file.sectors:
-            if inp == b:
-                i = self.reference_file.sectors.index(b)
-                self.rebuilt[i] = (addr, copy.deepcopy(b))
-                self.successUpdate.emit(i)
-                self.log.write(str(addr) + "\t\t" + str(i) + "\n")
-                self.log.flush()
-                print("check_sector: sector at address " + str(addr) + " on disk is equal to sector " + str(i) + " of reference file.")
-                if i+1 == len(self.reference_file.sectors):
-                    self.finished = True
-
 
     def __init__(self, vol, reference_file):
         super().__init__()
@@ -39,33 +95,7 @@ class DiskReader(QtCore.QObject):
         self.finished = False
         self.log = open(self.reference_file.name + "_" + str(time.time()*1000) + ".log", 'w')
         #self.main(start_at)
-        
-    def main(self, start_at):        
 
-        lock = Lock()
-        #create required directories
-        if not os.path.exists('tmp'):
-            os.makedirs('tmp')
-        if not os.path.exists('results'):
-            os.makedirs('results')
-
-        # start at position in bytes
-        self.diskFd.seek(int(start_at, 16))
-
-        # main loop
-        while not self.finished:
-
-            lock.acquire()
-            start = time.perf_counter()
-            data = self.diskFd.read(512)
-            stop = time.perf_counter()
-            self.perf.iteration(stop - start)
-
-            Thread(name='checking sector @'+hex(self.diskFd.tell() - 512),target=self.check_sector,args=[data, hex(self.diskFd.tell() - 512)]).start()
-            #self.check_sector(data, self.diskFd.tell(), self.success)
-            lock.release()
-
-            self.progressUpdate.emit([self.diskFd.tell(), self.perf.avg])
 
 class ReferenceFile():
     def __init__(self, path):
@@ -82,11 +112,11 @@ class ReferenceFile():
         while True:
             cur = file.read(512)
             if cur == b'':
-                break 
+                break
             elif len(cur) == 512:
-                result.append(cur)
+                result.append((cur, False))
             else:
-                result.append(bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1])))   #trailing sector zfill
+                result.append((bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1])), False))   #trailing sector zfill
         return result
 
 
@@ -97,7 +127,7 @@ class ChooseReferenceFileDialog(QFileDialog):
 
 class MainWindow(QWidget):
     def __init__(self, selected_vol):
-        super().__init__()      
+        super().__init__()          
 
         dlg = ChooseReferenceFileDialog()
         dlg.exec()
@@ -157,7 +187,12 @@ class MainWindow(QWidget):
         self.start.setText('...')
         self.start.setDisabled(True)
         self.start_at.setDisabled(True)  
-        Thread(name='recreate main',target=self.reader.main,args=[self.start_at.text().split("x")[1]]).start()  
+        recreate_main = Thread(name='recreate main',target=recreate,args=[self.reader, self.start_at.text().split("x")[1]])
+        recreate_main.start() 
+        # ...
+        #recreate_main.join()
+        print("Program terminated")
+        
 
     def updateSuccessCount(self, i):
         successCount = 0 
