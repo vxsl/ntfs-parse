@@ -5,6 +5,8 @@ from PyQt5 import QtCore
 from PyQt5 import *
 from PyQt5.QtWidgets import *
 from threading import Thread, Lock
+from concurrent import futures
+from multiprocessing import cpu_count
 
 """ from pympler import tracker """
 
@@ -20,9 +22,10 @@ from threading import Thread, Lock
     objgraph.show_most_common_types()
      """
 
-#def check_sector(inp, addr, reader):
-def check_sector():    
-    """ for b, found in reader.reference_file.sectors:
+
+def check_sector(inp, addr, reader):
+#def check_sector():    
+    for b, found in reader.reference_file.sectors:
         if inp == b:
             if found == False:
                 i = reader.reference_file.sectors.index((b, found))
@@ -35,10 +38,13 @@ def check_sector():
                     reader.finished = True
             else:
                 print("Block " + str(i) + " was found at " + str(addr) + " but was already located at " + reader.rebuilt[i][1])
-            return """
+            return
     return
 
 def recreate(reader, start_at):
+
+    executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() / 2)) # TODO what is the correct number here? Surely it is not correct to take all available threads..?
+
     debugstart = time.time()
 
     lock = Lock()
@@ -59,22 +65,23 @@ def recreate(reader, start_at):
 
     # main loop
     while not reader.finished:
-        with lock:
-            start = time.perf_counter()
-            data = reader.diskFd.read(512)
-            stop = time.perf_counter()
-            reader.perf.iteration(stop - start)
+        #with lock:
+        start = time.perf_counter()
+        data = reader.diskFd.read(512)
+        stop = time.perf_counter()
+        reader.perf.iteration(stop - start)
 
-            #t = Thread(name='checking sector @'+hex(reader.diskFd.tell() - 512),target=check_sector,args=[data, hex(reader.diskFd.tell() - 512), reader])
-            t = Thread(name='checking sector @'+hex(reader.diskFd.tell() - 512),target=check_sector)
-            t.start()
-            t.join()
-            #t = Thread(target=check_sector)
-            #check_sector(data, hex(reader.diskFd.tell() - 512), reader)
-            
-            reader.progressUpdate.emit([reader.diskFd.tell(), reader.perf.avg])
-            """ if (time.time() - debugstart) > 15:
-                debug_trace(tr) """
+        #t = Thread(name='checking sector @'+hex(reader.diskFd.tell() - 512),target=check_sector,args=[data, hex(reader.diskFd.tell() - 512), reader])
+        #t = Thread(name='checking sector @'+hex(reader.diskFd.tell() - 512),target=check_sector)
+        #Thread(target=check_sector).start()
+        #t = Thread(target=check_sector)
+        #check_sector(data, hex(reader.diskFd.tell() - 512), reader)
+
+        executor.submit(check_sector, data, hex(reader.diskFd.tell() - 512), reader)
+
+        reader.progressUpdate.emit([reader.diskFd.tell(), reader.perf.avg])
+        """ if (time.time() - debugstart) > 15:
+            debug_trace(tr) """
 
 class DiskReader(QtCore.QObject):    
     
