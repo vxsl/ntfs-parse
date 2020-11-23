@@ -1,10 +1,8 @@
 import time
 
-SAMPLE_SIZE = 100000
-
 class PerformanceCalc:
-    def __init__(self, fileObj):
-        self.sample_size = SAMPLE_SIZE
+    def __init__(self, disk_fd):
+        self.sample_size = 100000
         self.avg = 0
 
         """ print("Initial read speed test...")
@@ -40,3 +38,17 @@ class PerformanceCalc:
             self.cur_sum = 0
             self.cur_count = 0
             #print("avg = " +  f"{self.avg:.3f}" + " μs") """
+
+class ExpressPerformanceCalc(PerformanceCalc):
+    def __init__(self, disk_fd, skip_size):
+        super().__init__(disk_fd)
+        self.skip_size = skip_size
+        self.sample_size = 10000000
+
+    def increment(self):
+        self.cur_incr += 1
+        if (self.cur_incr*self.skip_size) >= self.sample_size:
+            cur_stop = time.perf_counter()
+            self.avg += (cur_stop - self.cur_start) 
+            self.avg = (self.avg / 2)
+            self.start()
