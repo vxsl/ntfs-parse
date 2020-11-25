@@ -1,7 +1,7 @@
 import time
 
 class PerformanceCalc:
-    def __init__(self, disk_fd):
+    def __init__(self):
         self.sample_size = 100000
         self.avg = 0
 
@@ -40,10 +40,10 @@ class PerformanceCalc:
             #print("avg = " +  f"{self.avg:.3f}" + " μs") """
 
 class ExpressPerformanceCalc(PerformanceCalc):
-    def __init__(self, disk_fd, skip_size):
-        super().__init__(disk_fd)
+    def __init__(self, skip_size):
+        super().__init__()
         self.skip_size = skip_size
-        self.sample_size = 10000000
+        self.sample_size = 1000000
 
     def increment(self):
         self.cur_incr += 1
