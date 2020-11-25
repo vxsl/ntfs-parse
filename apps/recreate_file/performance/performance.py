@@ -1,43 +1,23 @@
-import time
+from time import perf_counter
 
 class PerformanceCalc:
     def __init__(self):
         self.sample_size = 100000
         self.avg = 0
-
-        """ print("Initial read speed test...")
-        self.start()
-        while self.cur_incr < 1000:
-            tmp = fileObj.read(512)
-            print(tmp)
-            self.cur_incr += 1
-        cur_stop = time.perf_counter()
-        self.avg += (cur_stop - self.cur_start) * (self.sample_size / 1000)
-        print("Initial read speed test finished, initial average = " + "{:.2f}".format(self.avg))            """   
-
+        self.cur_incr = 0
+        self.cur_start = None
 
     def start(self):
         self.cur_incr = 0
-        self.cur_start = time.perf_counter()
+        self.cur_start = perf_counter()
 
     def increment(self):
         self.cur_incr += 1
         if self.cur_incr >= self.sample_size:
-            cur_stop = time.perf_counter()
-            self.avg += (cur_stop - self.cur_start) 
+            cur_stop = perf_counter()
+            self.avg += (cur_stop - self.cur_start)
             self.avg = (self.avg / 2)
             self.start()
-
-    """ def iteration(self, duration):
-        self.cur_sum += duration
-        self.cur_count += 1
-        if self.cur_count >= SECTOR_COUNT:
-            #print("avg = " +  f"{self.avg:.3f}" + " + " + f"{cur_avg:.3f}")            
-            self.avg += self.cur_sum  
-            self.avg = self.avg / 2  
-            self.cur_sum = 0
-            self.cur_count = 0
-            #print("avg = " +  f"{self.avg:.3f}" + " μs") """
 
 class ExpressPerformanceCalc(PerformanceCalc):
     def __init__(self, skip_size):
@@ -49,6 +29,7 @@ class ExpressPerformanceCalc(PerformanceCalc):
     def increment(self):
         self.cur_incr += 1
         if self.cur_incr >= self.increment_mark:
-            self.avg += (time.perf_counter() - self.cur_start) 
+            self.avg += (perf_counter() - self.cur_start)
             self.avg = (self.avg / 2)
             self.start()
+            

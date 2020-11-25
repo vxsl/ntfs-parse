@@ -1,10 +1,8 @@
-from PyQt5 import QtCore
-from PyQt5 import *
-from PyQt5.QtWidgets import *
 import string
 import os
-from raw_gz import raw_gz
-from recreate_file import gui
+from PyQt5.QtWidgets import QDialog, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QVBoxLayout, QApplication
+from apps.raw_gz import raw_gz
+from apps.recreate_file import gui
 
 class StartDialog(QDialog):
     def __init__(self):
@@ -13,12 +11,12 @@ class StartDialog(QDialog):
         self.setWindowTitle("raw-gz")
 
         vols = ['%s:' % v for v in string.ascii_uppercase if os.path.exists('%s:' % v)]
-        progs = ["locate and unpack .gzip archives", "recreate file"]        
+        progs = ["locate and unpack .gzip archives", "recreate file"]
 
         hbox1 = QHBoxLayout()
         vol_select_label = QLabel("Logical volume: ")
         self.vol_select_dropdown = QComboBox(self)
-        
+
         self.vol_select_dropdown.addItems(vols)
         self.vol_select_dropdown.setCurrentText("D:")    # TODO remove
         hbox1.addWidget(vol_select_label)
@@ -27,21 +25,21 @@ class StartDialog(QDialog):
         hbox2 = QHBoxLayout()
         prog_select_label = QLabel("Program: ")
         self.prog_select_dropdown = QComboBox(self)
-        self.prog_select_dropdown.addItems(progs)        
+        self.prog_select_dropdown.addItems(progs)
         self.prog_select_dropdown.setCurrentText("recreate file")  # TODO remove
-        
+
         hbox2.addWidget(prog_select_label)
         hbox2.addWidget(self.prog_select_dropdown)
-    
-        QBtn = QDialogButtonBox.Ok 
-        self.buttonBox = QDialogButtonBox(QBtn)
-        self.buttonBox.accepted.connect(self.accept)
+
+        qbtn = QDialogButtonBox.Ok
+        self.button_box = QDialogButtonBox(qbtn)
+        self.button_box.accepted.connect(self.accept)
 
 
         vert = QVBoxLayout()
         vert.addLayout(hbox1)
         vert.addLayout(hbox2)
-        vert.addWidget(self.buttonBox)
+        vert.addWidget(self.button_box)
         self.setLayout(vert)
 
 
