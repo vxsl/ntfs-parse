@@ -43,7 +43,7 @@ class ExpressPerformanceCalc(PerformanceCalc):
     def __init__(self, skip_size):
         super().__init__()
         self.skip_size = skip_size
-        self.sample_size = 1000000
+        self.sample_size = 10000000
 
     def increment(self):
         self.cur_incr += 1

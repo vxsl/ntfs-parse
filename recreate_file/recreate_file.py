@@ -9,23 +9,24 @@ from concurrent import futures
 from multiprocessing import cpu_count
 from math import ceil
 from datetime import timedelta
-from itertools import repeat
 import cProfile, pstats, io ##
- 
-def check_sector(inp, addr):
-#def check_sector():
-    for b in job.reference_file.sectors:
-        if inp == b:
-            i = job.reference_file.sectors.index(b)
-            job.rebuilt_file[i] = (addr, copy.deepcopy(b))
+
+lock = Lock()
+
+def check_sector(inp, addr, already_in_close_inspection=False):
+    for sector in job.reference_file.remaining_sectors:
+        if inp == sector and (addr, sector) not in job.rebuilt_file:
+            addr = hex(addr - 512)
+            with lock:
+                i = job.reference_file.sectors.index(sector)
+                job.rebuilt_file[i] = (addr, copy.deepcopy(sector))       
+                job.reference_file.remaining_sectors.pop(job.reference_file.remaining_sectors.index(sector))            
+            job.success_update.emit(i)
             job.log.write(str(addr) + "\t\t" + str(i) + "\n")
             job.log.flush()
-            print("check_sector: sector at logical address " + str(addr) + " on disk is equal to sector " + str(i) + " of reference file.")
-            if i+1 == len(job.reference_file.sectors):
-                job.finished = True
-            job.reference_file.sectors.pop(i)            
-            job.success_update.emit(i)
-            close_inspect(addr)
+            print("check_sector: sector at logical address " + addr + " on disk is equal to sector " + str(i) + " of reference file.")            
+            if not already_in_close_inspection:
+                close_inspect(addr)
             return
     return
 
@@ -34,8 +35,8 @@ def close_inspect(addr):
     bkwd = BackwardCloseReader()
     job.readers.append(fwd)
     job.readers.append(bkwd)
-    fwd.read(addr)
-    bkwd.read(addr)
+    Thread(name='close inspect forward @' + addr,target=fwd.read,args=[addr]).start()
+    Thread(name='close inspect backward @' + addr,target=bkwd.read,args=[addr]).start()
 
 class DiskReader(QtCore.QObject):
     
@@ -46,16 +47,17 @@ class DiskReader(QtCore.QObject):
 class CloseReader(DiskReader):
     def __init__(self):
         super().__init__()
-        self.sector_limit = (job.total_sectors * 3) #??? 
+        self.sector_limit = (job.total_sectors * 6) #??? 
 
 class ForwardCloseReader(CloseReader):
     def __init__(self):
         super().__init__()
+
     def read(self, addr):
         self.sector_count = 0
         self.fd.seek(int(addr, 16))
-        for _ in map(check_sector, repeat([self.fd.read(512), self.fd.tell()], self.sector_limit)):
-            pass
+        for _ in range(self.sector_limit):
+            check_sector(self.fd.read(512), self.fd.tell(), True)
 
 class BackwardCloseReader(CloseReader):
     def __init__(self):
@@ -63,9 +65,9 @@ class BackwardCloseReader(CloseReader):
     def read(self, addr):
         self.sector_count = 0
         self.fd.seek(int(addr, 16))
-        for _ in map(check_sector, repeat([self.fd.read(512), self.fd.tell()], self.sector_limit)):
-            self.fd.seek(-512, 1)
-            pass            
+        for _ in range(self.sector_limit):
+            check_sector(self.fd.read(512), self.fd.tell(), True)
+            self.fd.seek(-1024, 1)
 
 
 class PrimaryReader(DiskReader):
@@ -106,11 +108,8 @@ class ExpressPrimaryReader(PrimaryReader):
             executor.submit(check_sector, self.fd.read(512), self.fd.tell())
             self.progress_update.emit(self.fd.tell())        
             job.perf.increment()
-            self.fd.seek((job.total_sectors * 512), 1) # TODO 512 = ALLOCATION_UNIT
+            self.fd.seek(((job.total_sectors//2) * 512), 1) # TODO 512 = ALLOCATION_UNIT
             
-
-
-
 class Job(QtCore.QObject):    
 
     # PyQt event signallers
@@ -146,6 +145,7 @@ class ReferenceFile():
         split = path.split('/')
         self.fd = open(path, "rb")
         self.sectors = self.to_sectors(self.fd)
+        self.remaining_sectors = copy.deepcopy(self.sectors)
         self.size = os.stat(path).st_size
         self.dir = '/'.join(split[0:(len(split) - 1)])
         self.name = split[len(split) - 1]
