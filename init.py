@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import *
 import string
 import os
 from raw_gz import raw_gz
-from recreate_file import recreate_file
+from recreate_file import gui
 
 class StartDialog(QDialog):
     def __init__(self):
@@ -20,7 +20,7 @@ class StartDialog(QDialog):
         self.vol_select_dropdown = QComboBox(self)
         
         self.vol_select_dropdown.addItems(vols)
-        self.vol_select_dropdown.setCurrentText("E:")    # TODO remove
+        self.vol_select_dropdown.setCurrentText("D:")    # TODO remove
         hbox1.addWidget(vol_select_label)
         hbox1.addWidget(self.vol_select_dropdown)
 
@@ -66,7 +66,7 @@ if selected_prog == "locate and unpack .gzip archives":
 
 elif selected_prog == "recreate file":
     new_app = QApplication([])
-    window = recreate_file.MainWindow(selected_vol)
+    window = gui.MainWindow(selected_vol)
     window.setWindowTitle('recreate_file')
     window.setGeometry(500, 500, 500, 600)
     window.show()
