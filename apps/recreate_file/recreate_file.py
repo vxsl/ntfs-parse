@@ -96,21 +96,21 @@ class ExpressPrimaryReader(PrimaryReader):
 
     def __init__(self):
         super().__init__()
+        self.jump_size = job.total_sectors//2 * 512
         
     def read(self, addr):
         self.fd.seek(int(addr, 16))
         executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
         while True:
             executor.submit(check_sector, self.fd.read(512), self.fd.tell())
-            self.progress_update.emit(self.fd.tell())        
-            job.perf.increment()
-            self.fd.seek(((job.total_sectors//2) * 512), 1) # TODO 512 = ALLOCATION_UNIT
+            executor.submit(job.perf.increment)
+            self.fd.seek(self.jump_size, 1) # TODO 512 = ALLOCATION_UNIT
             
 class Job(QtCore.QObject):    
 
     # PyQt event signallers
     success_update = QtCore.pyqtSignal(object)
-
+    
     def __init__(self, vol, reference_file, do_logging, express):
         super().__init__()
         self.express = express

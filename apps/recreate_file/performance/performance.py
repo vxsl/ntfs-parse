@@ -43,12 +43,12 @@ class ExpressPerformanceCalc(PerformanceCalc):
     def __init__(self, skip_size):
         super().__init__()
         self.skip_size = skip_size
-        self.sample_size = 10000000
+        self.sample_size = 1000000
+        self.increment_mark = self.sample_size/self.skip_size
 
     def increment(self):
         self.cur_incr += 1
-        if (self.cur_incr*self.skip_size) >= self.sample_size:
-            cur_stop = time.perf_counter()
-            self.avg += (cur_stop - self.cur_start) 
+        if self.cur_incr >= self.increment_mark:
+            self.avg += (time.perf_counter() - self.cur_start) 
             self.avg = (self.avg / 2)
             self.start()

@@ -92,7 +92,7 @@ class MainWindow(QWidget):
         self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, reference_file)
 
         self.job.primary_reader.progress_update.connect(self.visualize_read_progress)
-        self.job.success_update.connect(self.updateSuccessCount)
+        self.job.success_update.connect(self.visualize_success_count)
         
         self.start.setText('...')
         self.start.setDisabled(True)
@@ -104,11 +104,18 @@ class MainWindow(QWidget):
 
         self.job.perf.start()
         recreate_main.start() 
+
+        Thread(name='check progress',target=self.check_progress).start()
         # ...
         #recreate_main.join()
         #print("Program terminated")
 
-    def updateSuccessCount(self, i):
+    def check_progress(self):
+        while True:
+            self.visualize_read_progress(self.job.primary_reader.fd.tell())     
+            time.sleep(1)
+
+    def visualize_success_count(self, i):   
 
         self.job.done_sectors += 1
         
@@ -119,7 +126,7 @@ class MainWindow(QWidget):
         
     def visualize_read_progress(self, progress):
         percent = 100 * progress / self.job.diskSize.total
-        self.progressPercentage.setText("{:.7f}".format(percent) + "%")
+        self.progressPercentage.setText("{:.2f}".format(percent) + "%")
         self.progressBar.setValue(percent)     
         
         if self.job.perf.avg > 0:
