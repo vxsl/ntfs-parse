@@ -2,14 +2,22 @@
 from datetime import timedelta
 from time import sleep
 from threading import Thread
+from shutil import disk_usage
 
 # Third-party imports
 from PyQt5 import QtCore
 from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox
 
 # Local imports
-from recreate_file import initialize_job, SourceFile
+from .recreate_file import initialize_job, SourceFile
 
+class FinishedDialog(QMessageBox):
+    def __init__(self, success):
+        super().__init__()
+        self.setIcon(QMessageBox.Warning)
+        self.setText('Finished.')
+        self.setInformativeText(str(success))
+        self.setStandardButtons(QMessageBox.Ok)
 
 class ChooseReferenceFileDialog(QFileDialog):
     def __init__(self):
@@ -37,7 +45,8 @@ class MainWindow(QWidget):
 
         self.start_at = QLineEdit()
         #self.start_at.setText('0x404A8A99000')
-        self.start_at.setText('0x404c91a1800')
+        #self.start_at.setText('0x404c91a1800')
+        self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
         start_at_label = QLabel("Start at address (search forward): ")
         start_at_hbox.addWidget(start_at_label)
@@ -90,21 +99,31 @@ class MainWindow(QWidget):
 
         self.setLayout(grid)
 
+    def invalid_address(self, invalid_input, selected_vol):
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Warning)
+        msg.setText(invalid_input + ' is not a valid address.')
+        msg.setInformativeText('Please enter a value between 0x0 and ' \
+            + str(hex(disk_usage(selected_vol + ':\\').total).upper() + '.'))
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
+
     def go(self, selected_vol, reference_file):
 
         start_at_input = self.start_at.text()
         try:
-            start_at = int(start_at_input, 16)
+            if 0 <= int(start_at_input, 16) <= disk_usage(selected_vol + ':\\').total:
+                start_at = int(start_at_input, 16)
+            else: 
+                self.invalid_address(start_at_input, selected_vol)
+                return
         except ValueError:
-            msg = QMessageBox()
-            msg.setIcon(QMessageBox.Warning)
-            msg.setText(start_at_input + ' is not a valid hexadecimal address.')
-            msg.setStandardButtons(QMessageBox.Ok)
-            msg.exec()
+            self.invalid_address(start_at_input, selected_vol)
             return
 
         self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, reference_file)
         self.job.success_update.connect(self.visualize_file_progress)
+        self.job.finished.connect(self.finished)
 
         self.start.setText('...')
         self.start.setDisabled(True)
@@ -117,9 +136,9 @@ class MainWindow(QWidget):
         recreate_main.start()
 
         Thread(name='visualize read progress',target=self.visualize_read_progress).start()
-        # ...
-        #recreate_main.join()
-        #print("Program terminated")
+
+    def finished(self, success):
+        FinishedDialog(True).exec()
 
     def visualize_file_progress(self, i):
         self.job.done_sectors += 1
@@ -151,4 +170,4 @@ class MainWindow(QWidget):
 
     def get_remaining_estimate(self, progress):
         seconds = self.job.perf.avg * ((self.job.diskSize.total - progress) / (512 * self.job.perf.sample_size))
-        return str("At most ~" + timedelta(seconds=seconds)).split(".")[0] + " remaining"
+        return "At most " + str(timedelta(seconds=seconds)).split(".")[0] + " remaining"

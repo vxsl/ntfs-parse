@@ -93,10 +93,16 @@ class ExpressPrimaryReader(PrimaryReader):
     def read(self, addr):
         self.fd.seek(addr)
         #executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
-        while True:
+
+        for _ in range(job.diskSize.total - addr):
+            data = self.fd.read(SECTOR_SIZE)
+            if not data:
+                break
             executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell())
             executor.submit(job.perf.increment)
             self.fd.seek(self.jump_size, 1)
+
+        job.finished.emit(None)
 
     def inspection_in_progress(self, addr):
         for address, reader in self.inspections:
@@ -110,14 +116,14 @@ class Job(QtCore.QObject):
 
     # PyQt event signaller
     success_update = QtCore.pyqtSignal(object)
+    finished = QtCore.pyqtSignal(object)
 
     def __init__(self, vol, source_file, do_logging, express):
         super().__init__()
-        self.express = express
+        self.express = express  
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.diskSize = disk_usage(vol + ':\\')
         self.source_file = source_file
-        self.finished = False
         self.done_sectors = 0
         self.total_sectors = len(source_file.sectors)
         self.rebuilt_file = [None] * self.total_sectors
