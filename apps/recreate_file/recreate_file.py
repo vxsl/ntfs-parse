@@ -1,6 +1,6 @@
 import time, os, copy
 from shutil import disk_usage
-from threading import Thread, Lock
+from threading import Thread, Lock, current_thread
 from concurrent import futures
 from multiprocessing import cpu_count
 from PyQt5 import QtCore
@@ -9,27 +9,37 @@ from .performance.performance import PerformanceCalc, ExpressPerformanceCalc
 SECTOR_SIZE = 512 # bytes
 lock = Lock()
 job = None
+executor = futures.ThreadPoolExecutor(max_workers=(cpu_count()))
 
 def check_sector(inp, addr, already_in_close_inspection=False):
     for sector in job.source_file.remaining_sectors:
         if inp == sector and (addr, sector) not in job.rebuilt_file:
-            addr = hex(addr - SECTOR_SIZE)
+            hex_addr = hex(addr - SECTOR_SIZE)
             with lock:
                 i = job.source_file.sectors.index(sector)
-                job.rebuilt_file[i] = (addr, copy.deepcopy(sector))
+                job.rebuilt_file[i] = (hex_addr, copy.deepcopy(sector))
                 job.source_file.remaining_sectors.pop(job.source_file.remaining_sectors.index(sector))
             job.success_update.emit(i)
-            job.log.write(str(addr) + "\t\t" + str(i) + "\n")
+            job.log.write(hex_addr + "\t\t" + str(i) + "\n")
             job.log.flush()
-            print("check_sector: sector at logical address " + addr + " on disk is equal to sector " + str(i) + " of source file.")
-            if not already_in_close_inspection:
+            print("check_sector: sector at logical address " + hex_addr + " on disk is equal to sector " + str(i) + " of source file.")
+            #if not already_in_close_inspection:
+            if not already_in_close_inspection and not job.primary_reader.inspection_in_progress(addr):
+                #executor.submit(close_inspect, addr)
                 close_inspect(addr)
             return
     return
 
 def close_inspect(addr):
-    Thread(name='close inspect forward @' + addr,target=ForwardCloseReader().read,args=[addr]).start()
-    Thread(name='close inspect backward @' + addr,target=BackwardCloseReader().read,args=[addr]).start()
+    forward = ForwardCloseReader()
+    backward = BackwardCloseReader()
+    job.primary_reader.inspections.append((hex(addr), forward))
+    job.primary_reader.inspections.append((hex(addr), backward))
+    #Thread(name='close inspect forward @' + addr,target=forward.read,args=[addr]).start()
+    #Thread(name='close inspect backward @' + addr,target=backward.read,args=[addr]).start()
+    executor.submit(forward.read, addr)
+    executor.submit(backward.read, addr)
+
 
 class DiskReader(QtCore.QObject):
     def __init__(self, disk_path):
@@ -44,22 +54,30 @@ class CloseReader(DiskReader):
 
 class ForwardCloseReader(CloseReader):
     def read(self, addr):
-        self.fd.seek(int(addr, 16))
+        current_thread().name = ("Forward close reader at " + hex(addr))
+        self.fd.seek(addr)
         for _ in range(self.sector_limit):
             check_sector(self.fd.read(SECTOR_SIZE), self.fd.tell(), True)
+        with lock:
+            job.primary_reader.inspections.remove((hex(addr), self))
+        return
 
 class BackwardCloseReader(CloseReader):
     def read(self, addr):
-        self.fd.seek(int(addr, 16))
+        current_thread().name = ("Backward close reader at " + hex(addr))
+        self.fd.seek(addr)
         for _ in range(self.sector_limit):
             check_sector(self.fd.read(SECTOR_SIZE), self.fd.tell(), True)
             self.fd.seek(-1024, 1)
+        with lock:
+            job.primary_reader.inspections.remove((hex(addr), self))
+        return
 
 class PrimaryReader(DiskReader):
 
     def read(self, addr):
         self.fd.seek(addr)
-        executor = futures.ThreadPoolExecutor(thread_name_prefix="Primary Reader Pool", max_workers=(cpu_count()))
+        #executor = futures.ThreadPoolExecutor(thread_name_prefix="Primary Reader Pool", max_workers=(cpu_count()))
         while True:
             executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell())
             executor.submit(job.perf.increment())
@@ -70,14 +88,23 @@ class ExpressPrimaryReader(PrimaryReader):
     def __init__(self, disk_path, total_sectors):
         super().__init__(disk_path)
         self.jump_size = total_sectors//2 * SECTOR_SIZE
+        self.inspections = []
 
     def read(self, addr):
         self.fd.seek(addr)
-        executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
+        #executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
         while True:
             executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell())
             executor.submit(job.perf.increment)
             self.fd.seek(self.jump_size, 1)
+
+    def inspection_in_progress(self, addr):
+        for address, reader in self.inspections:
+            upper_limit = int(address, 16) + (reader.sector_limit * SECTOR_SIZE) 
+            lower_limit = int(address, 16) - (reader.sector_limit * SECTOR_SIZE) 
+            if lower_limit <= addr and addr <= upper_limit:
+                return True
+        return False
 
 class Job(QtCore.QObject):
 
