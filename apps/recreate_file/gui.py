@@ -45,8 +45,8 @@ class MainWindow(QWidget):
 
         self.start_at = QLineEdit()
         #self.start_at.setText('0x404A8A99000')
-        #self.start_at.setText('0x404c91a1800')
-        self.start_at.setText('0xaea3d9fe000')
+        self.start_at.setText('0x404c91a1800')
+        #self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
         start_at_label = QLabel("Start at address (search forward): ")
         start_at_hbox.addWidget(start_at_label)
@@ -131,11 +131,11 @@ class MainWindow(QWidget):
         self.express_mode.setDisabled(True)
         self.do_logging.setDisabled(True)
 
+        Thread(name='visualize read progress',target=self.visualize_read_progress).start()
+
         recreate_main = Thread(name='recreate main',target=self.job.primary_reader.read,args=[start_at])
         self.job.perf.start()
         recreate_main.start()
-
-        Thread(name='visualize read progress',target=self.visualize_read_progress).start()
 
     def finished(self, success):
         FinishedDialog(True).exec()
@@ -152,7 +152,7 @@ class MainWindow(QWidget):
         while True:
             progress = self.job.primary_reader.fd.tell()
             percent = 100 * progress / self.job.diskSize.total
-            self.progress_percentage.setText("{:.2f}".format(percent) + "%")
+            self.progress_percentage.setText("{:.4f}".format(percent) + "%")
             self.progress_bar.setValue(percent)
             if self.job.perf.avg > 0:
                 self.sector_avg.setText("Average time to traverse " \
