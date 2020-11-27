@@ -7,26 +7,24 @@ from PyQt5 import QtCore
 from .performance.performance import PerformanceCalc, ExpressPerformanceCalc
 
 SECTOR_SIZE = 512 # bytes
+EMPTY_SECTOR = b'\x00' * SECTOR_SIZE
 lock = Lock()
 job = None
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count()))
 
 def check_sector(inp, addr, already_in_close_inspection=False):
-    for sector in job.source_file.remaining_sectors:
+    for og_sector_index, sector in job.source_file.remaining_sectors:
         if inp == sector and (addr, sector) not in job.rebuilt_file:
             hex_addr = hex(addr - SECTOR_SIZE)
             with lock:
-                i = job.source_file.sectors.index(sector)
-                job.rebuilt_file[i] = (hex_addr, copy.deepcopy(sector))
-                job.source_file.remaining_sectors.pop(job.source_file.remaining_sectors.index(sector))
-            job.success_update.emit(i)
-            job.log.write(hex_addr + "\t\t" + str(i) + "\n")
-            job.log.flush()
-            print("check_sector: sector at logical address " + hex_addr + " on disk is equal to sector " + str(i) + " of source file.")
-            #if not already_in_close_inspection:
+                job.rebuilt_file[og_sector_index] = (addr, copy.deepcopy(sector))
+                job.source_file.remaining_sectors.remove((og_sector_index, sector))
+            job.success_update.emit(og_sector_index)
             if not already_in_close_inspection and not job.primary_reader.inspection_in_progress(addr):
-                #executor.submit(close_inspect, addr)
                 close_inspect(addr)
+            print("check_sector: sector at logical address " + hex_addr + " on disk is equal to sector " + str(og_sector_index) + " of source file.")            
+            job.log.write(hex_addr + "\t\t" + str(og_sector_index) + "\n")
+            job.log.flush()
             return
     return
 
@@ -98,7 +96,10 @@ class ExpressPrimaryReader(PrimaryReader):
             data = self.fd.read(SECTOR_SIZE)
             if not data:
                 break
-            executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell())
+            if data != EMPTY_SECTOR:
+                executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell())
+            else:
+                print("EMPTY SECTOR")
             executor.submit(job.perf.increment)
             self.fd.seek(self.jump_size, 1)
 
@@ -106,8 +107,8 @@ class ExpressPrimaryReader(PrimaryReader):
 
     def inspection_in_progress(self, addr):
         for address, reader in self.inspections:
-            upper_limit = int(address, 16) + (reader.sector_limit * SECTOR_SIZE) 
-            lower_limit = int(address, 16) - (reader.sector_limit * SECTOR_SIZE) 
+            upper_limit = int(address, 16) + (reader.sector_limit * SECTOR_SIZE)
+            lower_limit = int(address, 16) - (reader.sector_limit * SECTOR_SIZE)
             if lower_limit <= addr and addr <= upper_limit:
                 return True
         return False
@@ -120,7 +121,7 @@ class Job(QtCore.QObject):
 
     def __init__(self, vol, source_file, do_logging, express):
         super().__init__()
-        self.express = express  
+        self.express = express
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.diskSize = disk_usage(vol + ':\\')
         self.source_file = source_file
@@ -149,7 +150,9 @@ class Job(QtCore.QObject):
 class SourceFile():
     def __init__(self, path):
         self.sectors = self.to_sectors(path)
-        self.remaining_sectors = copy.deepcopy(self.sectors)
+        self.remaining_sectors = []
+        for i in range(len(self.sectors)):
+            self.remaining_sectors.append((i, copy.deepcopy(self.sectors[i])))
         split = path.split('/')
         self.dir = '/'.join(split[0:(len(split) - 1)])
         self.name = split[len(split) - 1]
