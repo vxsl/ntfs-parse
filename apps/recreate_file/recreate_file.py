@@ -6,25 +6,34 @@ from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from .performance.performance import PerformanceCalc, ExpressPerformanceCalc
 
+#0A30303032383439363733203030303030206E200A30303032383439333138203030303030206E200A30303032383439363531203030303030206E200A30303032383439393233203030303030206E200A30303032383537363833203030303030206E200A30303032383538323835203030303030206E200A30303032383537393135203030303030206E200A30303032383538323633203030303030206E200A30303032383538353434203030303030206E200A30303032383636363038203030303030206E200A747261696C65720A3C3C202F53697A652031303737202F526F6F742035323720302052202F496E666F203120302052202F4944205B203C31636634313034613362636233306164653433313866363835356238356334623E0A3C31636634313034613362636233306164653433313866363835356238356334623E205D203E3E0A7374617274787265660A323836363834310A2525454F460A0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000
+TEST = b'\n0002849673 00000 n \n0002849318 00000 n \n0002849651 00000 n \n0002849923 00000 n \n0002857683 00000 n \n0002858285 00000 n \n0002857915 00000 n \n0002858263 00000 n \n0002858544 00000 n \n0002866608 00000 n \ntrailer\n<< /Size 1077 /Root 527 0 R /Info 1 0 R /ID [ <1cf4104a3bcb30ade4318f6855b85c4b>\n<1cf4104a3bcb30ade4318f6855b85c4b> ] >>\nstartxref\n2866841\n%%EOF\n\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00'
+
 SECTOR_SIZE = 512 # bytes
-EMPTY_SECTOR = b'\x00' * SECTOR_SIZE
+MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
 lock = Lock()
 job = None
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count()))
-
-def check_sector(inp, addr, already_in_close_inspection=False):
-    for og_sector_index, sector in job.source_file.remaining_sectors:
-        if inp == sector and (addr, sector) not in job.rebuilt_file:
+#addr == int('4191FFA5000', 16) and inp == sector
+def check_sector(inp, addr, close_reader=None):
+    for sector in job.source_file.remaining_sectors:
+        if inp == sector and ((addr - SECTOR_SIZE), sector) not in job.rebuilt_file:
             hex_addr = hex(addr - SECTOR_SIZE)
             with lock:
-                job.rebuilt_file[og_sector_index] = (addr, copy.deepcopy(sector))
-                job.source_file.remaining_sectors.remove((og_sector_index, sector))
-            job.success_update.emit(og_sector_index)
-            if not already_in_close_inspection and not job.primary_reader.inspection_in_progress(addr):
-                close_inspect(addr)
-            print("check_sector: sector at logical address " + hex_addr + " on disk is equal to sector " + str(og_sector_index) + " of source file.")            
-            job.log.write(hex_addr + "\t\t" + str(og_sector_index) + "\n")
+                i = job.source_file.get_unique_sector_index(sector)
+                job.rebuilt_file[i] = ((addr - SECTOR_SIZE), copy.deepcopy(sector))
+                job.source_file.remaining_sectors.remove(sector)
+            job.success_update.emit(i)
+            if close_reader:
+                close_reader.success_count += 1
+            elif not job.primary_reader.inspection_in_progress(addr):
+                close_inspect(addr - SECTOR_SIZE)
+            print("check_sector: sector at logical address " + hex_addr + " on disk is equal to sector " + str(i) + " of source file.")            
+            job.log.write(hex_addr + "\t\t" + str(i) + "\n")
             job.log.flush()
+            
+            if not filter(None, job.source_file.remaining_sectors):
+                job.finished.emit(None)
             return
     return
 
@@ -49,15 +58,20 @@ class CloseReader(DiskReader):
         super().__init__(job.disk_path)
         self.sector_limit = (job.total_sectors * 6) #???
         self.sector_count = 0
+        self.success_count = 0
 
 class ForwardCloseReader(CloseReader):
     def read(self, addr):
         current_thread().name = ("Forward close reader at " + hex(addr))
         self.fd.seek(addr)
         for _ in range(self.sector_limit):
-            check_sector(self.fd.read(SECTOR_SIZE), self.fd.tell(), True)
+            #check_sector(self.fd.read(SECTOR_SIZE), self.fd.tell(), True)
+            data = self.fd.read(SECTOR_SIZE)
+            if data not in MEANINGLESS_SECTORS or self.success_count > (self.sector_count / 2):
+                executor.submit(check_sector, data, self.fd.tell(), self)
         with lock:
             job.primary_reader.inspections.remove((hex(addr), self))
+        current_thread().name = ("Control returned from a forward close reader at " + hex(addr))
         return
 
 class BackwardCloseReader(CloseReader):
@@ -65,10 +79,12 @@ class BackwardCloseReader(CloseReader):
         current_thread().name = ("Backward close reader at " + hex(addr))
         self.fd.seek(addr)
         for _ in range(self.sector_limit):
-            check_sector(self.fd.read(SECTOR_SIZE), self.fd.tell(), True)
+            #check_sector(self.fd.read(SECTOR_SIZE), self.fd.tell(), True)
+            executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell(), self)
             self.fd.seek(-1024, 1)
         with lock:
             job.primary_reader.inspections.remove((hex(addr), self))
+        current_thread().name = ("Control returned from a backward close reader at " + hex(addr))
         return
 
 class PrimaryReader(DiskReader):
@@ -96,10 +112,9 @@ class ExpressPrimaryReader(PrimaryReader):
             data = self.fd.read(SECTOR_SIZE)
             if not data:
                 break
-            if data != EMPTY_SECTOR:
-                executor.submit(check_sector, self.fd.read(SECTOR_SIZE), self.fd.tell())
-            else:
-                print("EMPTY SECTOR")
+            if data in MEANINGLESS_SECTORS:
+                continue
+            executor.submit(check_sector, data, self.fd.tell())
             executor.submit(job.perf.increment)
             self.fd.seek(self.jump_size, 1)
 
@@ -112,12 +127,18 @@ class ExpressPrimaryReader(PrimaryReader):
             if lower_limit <= addr and addr <= upper_limit:
                 return True
         return False
-
+    
 class Job(QtCore.QObject):
 
     # PyQt event signaller
     success_update = QtCore.pyqtSignal(object)
     finished = QtCore.pyqtSignal(object)
+
+    def build_file(self):
+        out_file = open(self.dir_name + '/' + job.reference_file.name.split('.')[0] + "_RECONSTRUCTED_" + job.reference_file.name.split('.')[1], 'wb')
+        for sector in self.rebuilt_file:
+            out_file.write(sector)
+        out_file.close() 
 
     def __init__(self, vol, source_file, do_logging, express):
         super().__init__()
@@ -128,6 +149,7 @@ class Job(QtCore.QObject):
         self.done_sectors = 0
         self.total_sectors = len(source_file.sectors)
         self.rebuilt_file = [None] * self.total_sectors
+        self.finished.connect(self.build_file)
 
         if express == True:
             self.primary_reader = ExpressPrimaryReader(self.disk_path, self.total_sectors)
@@ -137,25 +159,36 @@ class Job(QtCore.QObject):
             job.perf = PerformanceCalc()
 
         if do_logging == True:
-            dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
-            os.makedirs(dir_name, mode=0o755)
-            self.log = open(dir_name + '/' + self.source_file.name + ".log", 'w')
+            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
+            os.makedirs(self.dir_name, mode=0o755)
+            self.log = open(self.dir_name + '/' + self.source_file.name + ".log", 'w')
         else:
-            dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
-            os.makedirs(dir_name, mode=0o755)
-            self.log = open(dir_name + '/' + self.source_file.name + ".log", 'w')
+            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
+            os.makedirs(self.dir_name, mode=0o755)
+            self.log = open(self.dir_name + '/' + self.source_file.name + ".log", 'w')
             # do something...
             print("Undefined behaviour")
+
+
 
 class SourceFile():
     def __init__(self, path):
         self.sectors = self.to_sectors(path)
-        self.remaining_sectors = []
-        for i in range(len(self.sectors)):
-            self.remaining_sectors.append((i, copy.deepcopy(self.sectors[i])))
+        self.remaining_sectors = copy.deepcopy(self.sectors)
         split = path.split('/')
         self.dir = '/'.join(split[0:(len(split) - 1)])
         self.name = split[len(split) - 1]
+
+    def get_unique_sector_index(self, sector):
+
+        occurrences = [i for i, s in enumerate(self.sectors) if s == sector] # get all occurences of this data
+        if len(occurrences) > 1:
+            for index in occurrences:
+                if job.rebuilt_file[index] == None:
+                    return index
+        else:
+            return occurrences[0]
+
 
     def to_sectors(self, path):
         file = open(path, "rb")
