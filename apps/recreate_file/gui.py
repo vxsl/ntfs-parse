@@ -1,22 +1,30 @@
 # Standard library imports
 from datetime import timedelta
 from time import sleep
-from threading import Thread
+from threading import Thread, current_thread
 from shutil import disk_usage
+from concurrent import futures
+from multiprocessing import cpu_count
 
 # Third-party imports
 from PyQt5 import QtCore
-from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox
+from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox
 
 # Local imports
 from .recreate_file import initialize_job, SourceFile
 
+executor = futures.ThreadPoolExecutor(max_workers=(cpu_count()))
+
 class FinishedDialog(QMessageBox):
-    def __init__(self, success):
+    def __init__(self, success, path):
         super().__init__()
         self.setIcon(QMessageBox.Warning)
-        self.setText('Finished.')
-        self.setInformativeText(str(success))
+        if success:
+            self.setText('Finished: output written to ' + path)
+            #TODO display diff of original vs rebuilt
+        else:
+            self.setText('Unsuccessful.')
+            #TODO not sure what to do here
         self.setStandardButtons(QMessageBox.Ok)
 
 class ChooseReferenceFileDialog(QFileDialog):
@@ -44,8 +52,10 @@ class MainWindow(QWidget):
         source_file_info.addWidget(QLabel(str(len(source_file.sectors)) + " sectors"), 2, 1)
 
         self.start_at = QLineEdit()
+        #self.start_at.setText('0')
         #self.start_at.setText('0x404A8A99000')
-        self.start_at.setText('0x404c91a1800')
+        #self.start_at.setText('0x404c91a1800')
+        self.start_at.setText('0x4191FFA4800')
         #self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
         start_at_label = QLabel("Start at address (search forward): ")
@@ -91,13 +101,82 @@ class MainWindow(QWidget):
         self.time_remaining.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         grid.addWidget(self.time_remaining, 8, 2)
 
+
+        self.inspections_box = QGroupBox("Close inspections")
+        self.inspections = QVBoxLayout()
+        self.inspections_box.setLayout(self.inspections)
+        grid.addWidget(self.inspections_box, 5, 0, 1, 3)
+        
         grid.addLayout(successes_hbox, 3, 0)
         grid.addWidget(self.current_addr, 7, 2)
-        grid.addWidget(self.progress_bar, 4, 0, 4, 3)
+        grid.addWidget(self.progress_bar, 4, 0, 1, 3)
+
         grid.addWidget(self.start, 9, 0)
         grid.addLayout(start_at_hbox, 10, 0)
 
         self.setLayout(grid)
+        
+        current_thread().name = "MAIN GUI THREAD"
+
+    def closeEvent(self, event):
+        if not self.job.finished:
+            reply = QMessageBox.question(self, 'Window Close', 'Searching is not finished. Are you sure you want to close the window?',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+            if reply == QMessageBox.Yes:
+                event.accept()
+                print('Window closed')
+            else:
+                event.ignore()
+
+    class inspection_visualizer:
+        def __init__(self, inspection, window):
+            self.forward = inspection.forward
+            self.backward = inspection.backward
+            self.forward_label = QLabel('Forward: ')
+            self.forward_bar = QProgressBar()
+            self.backward_label = QLabel('Backward: ')
+            self.backward_bar = QProgressBar()
+            self.forward_bar.setTextVisible(False)
+            self.backward_bar.setTextVisible(False)
+            
+            self.label = QLabel("Close inspection at " + hex(inspection.addr).upper())
+            bars = QHBoxLayout()
+            fwdbox = QVBoxLayout()
+            bkwdbox = QVBoxLayout()
+            fwdbox.addWidget(self.forward_bar)
+            fwdbox.addWidget(self.forward_label)
+            bkwdbox.addWidget(self.backward_bar)
+            bkwdbox.addWidget(self.backward_label)
+            bars.addLayout(fwdbox)
+            bars.addLayout(bkwdbox)
+
+            window.inspections.addWidget(self.label)
+            window.inspections.addLayout(bars)
+            window.inspections_box.setLayout(window.inspections)
+            
+            #Thread(target=self.visualize_inspection_progress).start()
+            executor.submit(self.visualize_inspection_progress)
+            return
+
+        def visualize_inspection_progress(self):
+            while True: 
+                self.forward_bar.setValue(100 * self.forward.sector_count / self.forward.sector_limit)
+                self.forward_label.setText('Forward: ' + str(self.forward.sector_count) + '/' + str(self.forward.sector_limit))
+                self.backward_bar.setValue(100 * self.backward.sector_count / self.backward.sector_limit)
+                self.backward_label.setText('Backward: ' + str(self.backward.sector_count) + '/' + str(self.backward.sector_limit))
+                sleep(0.2)                
+                if (self.forward.sector_count / self.forward.sector_limit) >= 1:
+                    self.forward_bar.setParent(None)
+                    self.forward_label.setParent(None)
+                if (self.backward.sector_count / self.backward.sector_limit) >= 1:
+                    self.backward_bar.setParent(None)
+                    self.backward_label.setParent(None)
+                if (self.forward.sector_count / self.forward.sector_limit) >= 1 and (self.backward.sector_count / self.backward.sector_limit) >= 1:
+                    self.label.setParent(None)
+                    break
+            return
+                
 
     def invalid_address(self, invalid_input, selected_vol):
         msg = QMessageBox()
@@ -108,7 +187,8 @@ class MainWindow(QWidget):
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
-    def go(self, selected_vol, reference_file):
+
+    def go(self, selected_vol, source_file):
 
         start_at_input = self.start_at.text()
         try:
@@ -121,9 +201,10 @@ class MainWindow(QWidget):
             self.invalid_address(start_at_input, selected_vol)
             return
 
-        self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, reference_file)
-        self.job.success_update.connect(self.visualize_file_progress)
-        self.job.finished.connect(self.finished)
+        self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, source_file, executor)
+        self.job.success_signal.connect(self.visualize_file_progress)
+        self.job.new_inspection_signal.connect(lambda inspection: self.inspection_visualizer(inspection, self))
+        self.job.finished_signal.connect(self.finished)
 
         self.start.setText('...')
         self.start.setDisabled(True)
@@ -131,28 +212,32 @@ class MainWindow(QWidget):
         self.express_mode.setDisabled(True)
         self.do_logging.setDisabled(True)
 
-        Thread(name='visualize read progress',target=self.visualize_read_progress).start()
+        #Thread(name='visualize read progress',target=self.visualize_read_progress).start()
+        executor.submit(self.visualize_read_progress)
 
-        recreate_main = Thread(name='recreate main',target=self.job.primary_reader.read,args=[start_at])
+        #recreate_main = Thread(name='recreate main',target=self.job.primary_reader.read,args=[start_at])
+        executor.submit(self.job.primary_reader.read, start_at)
         self.job.perf.start()
-        recreate_main.start()
+        #recreate_main.start()
 
     def finished(self, success):
-        FinishedDialog(True).exec()
+        FinishedDialog(success, self.job.rebuilt_file_path).exec()
+        self.close()
 
     def visualize_file_progress(self, i):
         self.job.done_sectors += 1
         self.successes.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
-        + " = " + "{:.4f}".format(self.job.done_sectors / self.job.total_sectors) \
+        + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
         + "%\n\n Testing equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
 
     def visualize_read_progress(self):
+        current_thread().name = "Visualize read progress"
         while True:
             progress = self.job.primary_reader.fd.tell()
             percent = 100 * progress / self.job.diskSize.total
-            self.progress_percentage.setText("{:.4f}".format(percent) + "%")
+            self.progress_percentage.setText("{:.2f}".format(percent) + "%")
             self.progress_bar.setValue(percent)
             if self.job.perf.avg > 0:
                 self.sector_avg.setText("Average time to traverse " \
