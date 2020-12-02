@@ -139,8 +139,8 @@ class MainWindow(QWidget):
             self.backward_bar = QProgressBar()
             self.forward_bar.setTextVisible(False)
             self.backward_bar.setTextVisible(False)
-            
-            self.label = QLabel("Close inspection at " + hex(inspection.addr).upper())
+            self.label_prefix = "Close inspection at " + hex(inspection.addr)
+            self.label = QLabel(self.label_prefix)
             bars = QHBoxLayout()
             fwdbox = QVBoxLayout()
             bkwdbox = QVBoxLayout()
@@ -161,6 +161,7 @@ class MainWindow(QWidget):
 
         def visualize_inspection_progress(self):
             while True: 
+                self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
                 self.forward_bar.setValue(100 * self.forward.sector_count / self.forward.sector_limit)
                 self.forward_label.setText('Forward: ' + str(self.forward.sector_count) + '/' + str(self.forward.sector_limit))
                 self.backward_bar.setValue(100 * self.backward.sector_count / self.backward.sector_limit)
@@ -173,6 +174,9 @@ class MainWindow(QWidget):
                     self.backward_bar.setParent(None)
                     self.backward_label.setParent(None)
                 if (self.forward.sector_count / self.forward.sector_limit) >= 1 and (self.backward.sector_count / self.backward.sector_limit) >= 1:
+                    while executor._work_queue.qsize() > 0:
+                        self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
+                        sleep(0.5)
                     self.label.setParent(None)
                     break
             return
@@ -222,7 +226,7 @@ class MainWindow(QWidget):
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
-        self.close()
+        #self.close()
 
     def visualize_file_progress(self, i):
         self.job.done_sectors += 1
@@ -235,24 +239,30 @@ class MainWindow(QWidget):
     def visualize_read_progress(self):
         current_thread().name = "Visualize read progress"
         while True:
-            progress = self.job.primary_reader.fd.tell()
-            percent = 100 * progress / self.job.diskSize.total
-            self.progress_percentage.setText("{:.2f}".format(percent) + "%")
-            self.progress_bar.setValue(percent)
-            if self.job.perf.avg > 0:
-                self.sector_avg.setText("Average time to traverse " \
-                + str(self.job.perf.sample_size) \
-                + " sectors (" + str(self.job.perf.sample_size * 512 / 1000000) \
-                + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
-                self.time_remaining.setText(self.get_remaining_estimate(progress))
+            if not self.job.primary_reader.inspections:
+                progress = self.job.primary_reader.fd.tell()
+                percent = 100 * progress / self.job.diskSize.total
+                self.progress_percentage.setText("{:.2f}".format(percent) + "%")
+                self.progress_bar.setValue(percent)
+                if self.job.perf.avg > 0:
+                    self.sector_avg.setText("Average time to traverse " \
+                    + str(self.job.perf.sample_size) \
+                    + " sectors (" + str(self.job.perf.sample_size * 512 / 1000000) \
+                    + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
+                    self.time_remaining.setText(self.get_remaining_estimate(progress))
+                else:
+                    self.sector_avg.setText("Average time to traverse " \
+                    + str(self.job.perf.sample_size) + " sectors (" \
+                    + str(self.job.perf.sample_size * 512 / 1000000) \
+                    + " MB): calculating...")
+                    self.time_remaining.setText("Calculating time remaining...")
             else:
-                self.sector_avg.setText("Average time to traverse " \
-                + str(self.job.perf.sample_size) + " sectors (" \
-                + str(self.job.perf.sample_size * 512 / 1000000) \
-                + " MB): calculating...")
-                self.time_remaining.setText("Calculating time remaining...")
+                self.time_remaining.setText(self.get_remaining_estimate(progress))                    
             sleep(1)
 
     def get_remaining_estimate(self, progress):
-        seconds = self.job.perf.avg * ((self.job.diskSize.total - progress) / (512 * self.job.perf.sample_size))
-        return "At most " + str(timedelta(seconds=seconds)).split(".")[0] + " remaining"
+        if not self.job.primary_reader.inspections:
+            seconds = self.job.perf.avg * ((self.job.diskSize.total - progress) / (512 * self.job.perf.sample_size))
+            return "At most " + str(timedelta(seconds=seconds)).split(".")[0] + " remaining to traverse disk"
+        else:
+            return str(len(self.job.primary_reader.inspections)) + " close inspections in progress."
