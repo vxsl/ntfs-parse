@@ -5,6 +5,7 @@ from threading import Thread, current_thread
 from shutil import disk_usage
 from concurrent import futures
 from multiprocessing import cpu_count
+from sys import exit
 
 # Third-party imports
 from PyQt5 import QtCore
@@ -41,21 +42,21 @@ class MainWindow(QWidget):
         dlg.exec()
         path = dlg.selectedFiles()[0]
 
-        source_file = SourceFile(path)
+        file = SourceFile(path)
 
-        source_file_info = QGridLayout()
-        source_file_info.addWidget(QLabel('Source file name:'), 0, 0)
-        source_file_info.addWidget(QLabel(source_file.name), 0, 1)
-        source_file_info.addWidget(QLabel('Source file location:'), 1, 0)
-        source_file_info.addWidget(QLabel(source_file.dir), 1, 1)
-        source_file_info.addWidget(QLabel('Size:'), 2, 0)
-        source_file_info.addWidget(QLabel(str(len(source_file.sectors)) + " sectors"), 2, 1)
+        file_info = QGridLayout()
+        file_info.addWidget(QLabel('Source file name:'), 0, 0)
+        file_info.addWidget(QLabel(file.name), 0, 1)
+        file_info.addWidget(QLabel('Source file location:'), 1, 0)
+        file_info.addWidget(QLabel(file.dir), 1, 1)
+        file_info.addWidget(QLabel('Size:'), 2, 0)
+        file_info.addWidget(QLabel(str(len(file.remaining_sectors)) + " sectors"), 2, 1)
 
         self.start_at = QLineEdit()
         #self.start_at.setText('0')
         #self.start_at.setText('0x404A8A99000')
-        #self.start_at.setText('0x404c91a1800')
-        self.start_at.setText('0x4191FFA4800')
+        self.start_at.setText('0x404c91a1800')
+        #self.start_at.setText('0x4191FFA4800')
         #self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
         start_at_label = QLabel("Start at address (search forward): ")
@@ -63,7 +64,7 @@ class MainWindow(QWidget):
         start_at_hbox.addWidget(self.start_at)
 
         self.successes = QLabel()
-        self.successes.setText("0/" + (str(len(source_file.sectors))))
+        self.successes.setText("0/" + (str(len(file.remaining_sectors))))
         successes_hbox = QHBoxLayout()
         successes_hbox.addWidget(self.successes)
 
@@ -78,16 +79,16 @@ class MainWindow(QWidget):
         self.express_mode.setChecked(True)
 
         self.do_logging = QCheckBox("Log (./ntfs-toolbox/...): ")
-        self.do_logging.setChecked(False)
+        self.do_logging.setChecked(True)
 
         self.current_addr = QPushButton('Display current address')
         self.current_addr.clicked.connect(lambda: self.current_addr.setText(hex(self.job.primary_reader.fd.tell())))
 
         self.start = QPushButton('Start')
-        self.start.clicked.connect(lambda: self.go(selected_vol, source_file))
+        self.start.clicked.connect(lambda: self.go(selected_vol, file))
 
         grid = QGridLayout()
-        grid.addLayout(source_file_info, 0, 0)
+        grid.addLayout(file_info, 0, 0)
 
         grid.addWidget(self.express_mode, 7, 0)
         grid.addWidget(self.do_logging, 8, 0)
@@ -125,7 +126,8 @@ class MainWindow(QWidget):
 
             if reply == QMessageBox.Yes:
                 event.accept()
-                print('Window closed')
+                print('Window closed')                
+                exit()
             else:
                 event.ignore()
 
@@ -141,6 +143,7 @@ class MainWindow(QWidget):
             self.backward_bar.setTextVisible(False)
             self.label_prefix = "Close inspection at " + hex(inspection.addr)
             self.label = QLabel(self.label_prefix)
+            self.time_estimate = QLabel("Calculating time remaining...")
             bars = QHBoxLayout()
             fwdbox = QVBoxLayout()
             bkwdbox = QVBoxLayout()
@@ -162,10 +165,14 @@ class MainWindow(QWidget):
         def visualize_inspection_progress(self):
             while True: 
                 self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-                self.forward_bar.setValue(100 * self.forward.sector_count / self.forward.sector_limit)
-                self.forward_label.setText('Forward: ' + str(self.forward.sector_count) + '/' + str(self.forward.sector_limit))
+
+                self.forward_bar.setValue(100 * self.forward.sector_count / self.forward.sector_limit)                
                 self.backward_bar.setValue(100 * self.backward.sector_count / self.backward.sector_limit)
-                self.backward_label.setText('Backward: ' + str(self.backward.sector_count) + '/' + str(self.backward.sector_limit))
+
+                self.forward_label.setText('Forward: ' + str(self.forward.sector_count) + '/' + str(self.forward.sector_limit) \
+                                            + '\n' + self.forward.perf.get_remaining_estimate())
+                self.backward_label.setText('Backward: ' + str(self.backward.sector_count) + '/' + str(self.backward.sector_limit) \
+                                            + '\n' + self.backward.perf.get_remaining_estimate())
                 sleep(0.2)                
                 if (self.forward.sector_count / self.forward.sector_limit) >= 1:
                     self.forward_bar.setParent(None)
@@ -192,7 +199,7 @@ class MainWindow(QWidget):
         msg.exec()
 
 
-    def go(self, selected_vol, source_file):
+    def go(self, selected_vol, file):
 
         start_at_input = self.start_at.text()
         try:
@@ -205,10 +212,12 @@ class MainWindow(QWidget):
             self.invalid_address(start_at_input, selected_vol)
             return
 
-        self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, source_file, executor)
+        self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, file, executor)
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(lambda inspection: self.inspection_visualizer(inspection, self))
         self.job.finished_signal.connect(self.finished)
+
+        self.job.ready_signal.connect(lambda: executor.submit(self.visualize_read_progress))
 
         self.start.setText('...')
         self.start.setDisabled(True)
@@ -217,16 +226,15 @@ class MainWindow(QWidget):
         self.do_logging.setDisabled(True)
 
         #Thread(name='visualize read progress',target=self.visualize_read_progress).start()
-        executor.submit(self.visualize_read_progress)
 
         #recreate_main = Thread(name='recreate main',target=self.job.primary_reader.read,args=[start_at])
-        executor.submit(self.job.primary_reader.read, start_at)
-        self.job.perf.start()
+        executor.submit(self.job.begin, start_at)        
+        #self.job.perf.start()
         #recreate_main.start()
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
-        #self.close()
+        self.close()
 
     def visualize_file_progress(self, i):
         self.job.done_sectors += 1
@@ -239,30 +247,16 @@ class MainWindow(QWidget):
     def visualize_read_progress(self):
         current_thread().name = "Visualize read progress"
         while True:
-            if not self.job.primary_reader.inspections:
-                progress = self.job.primary_reader.fd.tell()
-                percent = 100 * progress / self.job.diskSize.total
-                self.progress_percentage.setText("{:.2f}".format(percent) + "%")
-                self.progress_bar.setValue(percent)
-                if self.job.perf.avg > 0:
-                    self.sector_avg.setText("Average time to traverse " \
-                    + str(self.job.perf.sample_size) \
-                    + " sectors (" + str(self.job.perf.sample_size * 512 / 1000000) \
-                    + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
-                    self.time_remaining.setText(self.get_remaining_estimate(progress))
-                else:
-                    self.sector_avg.setText("Average time to traverse " \
-                    + str(self.job.perf.sample_size) + " sectors (" \
-                    + str(self.job.perf.sample_size * 512 / 1000000) \
-                    + " MB): calculating...")
-                    self.time_remaining.setText("Calculating time remaining...")
-            else:
-                self.time_remaining.setText(self.get_remaining_estimate(progress))                    
-            sleep(1)
-
-    def get_remaining_estimate(self, progress):
-        if not self.job.primary_reader.inspections:
-            seconds = self.job.perf.avg * ((self.job.diskSize.total - progress) / (512 * self.job.perf.sample_size))
-            return "At most " + str(timedelta(seconds=seconds)).split(".")[0] + " remaining to traverse disk"
-        else:
-            return str(len(self.job.primary_reader.inspections)) + " close inspections in progress."
+            #if not self.job.primary_reader.inspections:
+            #progress = self.job.primary_reader.fd.tell()
+            progress =  self.job.perf.sectors_read
+            #percent = 100 * progress / self.job.diskSize.total
+            percent = 100 * progress / self.job.perf.total_sectors_to_read
+            self.progress_percentage.setText("{:.3f}".format(percent) + "%")
+            self.progress_bar.setValue(percent)
+            self.sector_avg.setText("Average time to traverse " \
+            + str(self.job.perf.sample_size * self.job.perf.skip_size) \
+            + " sectors (" + str(self.job.perf.sample_size * self.job.perf.skip_size * 512 / 1000000) \
+            + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
+            self.time_remaining.setText(self.job.perf.get_remaining_estimate())
+            sleep(0.2)
