@@ -11,69 +11,21 @@ lock = Lock()
 job = None
 executor = None
 
-#addr == int('4191FFA5000', 16) and inp == sector
-""" def check_sector(inp, addr, close_reader=None):
-    for sector in filter(None, job.file.remaining_sectors):
-        #if inp == sector and ((addr - SECTOR_SIZE), sector) not in job.rebuilt_file:
-        if inp == sector:
-            hex_addr = hex(addr - SECTOR_SIZE)
-            with lock:
-                i = job.file.get_unique_sector_index(sector)
-                job.rebuilt_file[i] = ((addr - SECTOR_SIZE), copy.deepcopy(sector))
-                job.file.remaining_sectors.remove(sector)
-            job.success_signal.emit(i)
-            if close_reader:
-                close_reader.success_count += 1
-            elif not job.primary_reader.inspection_in_progress(addr):
-                job.begin_close_inspection(addr - SECTOR_SIZE)
-            #print(str(close_reader) + ": sector at logical address " + hex_addr + " on disk is equal to sector " + str(i) + " of source file.")
-            job.log.write(hex_addr + "\t\t" + str(i) + "\n")
-            job.log.flush()
-            if not job.finished and not list(filter(None, job.file.remaining_sectors)):
-                job.finish()
-            return
-    return """
-
-""" def check_sector(inp, addr, close_reader=None):
-    #if inp == any(filter(None, job.file.remaining_sectors)):
-    indexes = [index for index, entry in enumerate(job.file.sectors) if entry[0] == inp]
-    if indexes:
-    #if inp in [entry[0] for entry in job.file.sectors]:
-        actual_address = addr - SECTOR_SIZE
-        with lock:
-            #indexes = [index for index, entry in enumerate(job.file.sectors) if entry[0] == inp]
-            for i in indexes:
-                job.file.sectors[i][1].append(actual_address)
-        job.success_signal.emit(indexes)
-        if close_reader:
-            close_reader.success_count += 1
-        elif not job.primary_reader.inspection_in_progress(addr):
-            job.begin_close_inspection(actual_address)
-        if not job.finished and not [index for index, entry in enumerate(job.file.sectors) if not entry[1]]:
-            job.finish()
-        return
-    return """
-
 def check_sector(inp, addr, close_reader=None):
-    #if inp == any(filter(None, job.file.remaining_sectors)):
-    #indexes = [index for index, entry in enumerate(job.file.sectors) if entry[0] == inp]
-    indexes = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
-    if indexes:
-    #if inp in [entry[0] for entry in job.file.sectors]:
-        actual_address = addr - SECTOR_SIZE
-        with lock:
-            #indexes = [index for index, entry in enumerate(job.file.sectors) if entry[0] == inp]
-            for i in indexes:
-                job.file.address_table[i].append(actual_address)
-                job.file.remaining_sectors[i] = None
-                job.success_signal.emit(i)
+    try:
+        i = job.file.remaining_sectors.index(inp)
+        actual_address = addr - SECTOR_SIZE 
+        job.file.address_table[i].append(actual_address)
+        job.file.remaining_sectors[i] = None
+        job.success_signal.emit(i)
         if close_reader:
             close_reader.success_count += 1
         elif not job.primary_reader.inspection_in_progress(addr):
             job.begin_close_inspection(actual_address)
-        #if not job.finished and not [index for index, entry in enumerate(job.file.sectors) if not entry[1]]:
         if not job.finished and not any(job.file.remaining_sectors):
             job.finish()
+        return
+    except ValueError:
         return
     return
 
