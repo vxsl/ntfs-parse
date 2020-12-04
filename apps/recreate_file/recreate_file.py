@@ -17,15 +17,19 @@ def check_sector(inp, addr, close_reader=None):
         actual_address = addr - SECTOR_SIZE 
         job.file.address_table[i].append(actual_address)
         job.file.remaining_sectors[i] = None
-        job.success_signal.emit(i)
+        if len(job.file.address_table[i]) == 1:
+            job.success_signal.emit(i)
         if close_reader:
             close_reader.success_count += 1
+            close_reader.consecutive_successes += 1
         elif not job.primary_reader.inspection_in_progress(addr):
             job.begin_close_inspection(actual_address)
-        if not job.finished and not any(job.file.remaining_sectors):
+        if not any(job.file.remaining_sectors) and not job.finished:
             job.finish()
         return
-    except ValueError:
+    except ValueError:  # inp did not exist in job.file.remaining_sectors
+        if close_reader:
+            close_reader.consecutive_successes = 0
         return
     return
 
@@ -38,10 +42,12 @@ class DiskReader(QtCore.QObject):
 class CloseReader(DiskReader):
     def __init__(self):
         super().__init__(job.disk_path)
-        self.sector_limit = (job.total_sectors * 2) #???
+        self.sector_limit = job.total_sectors #???
         self.sector_count = 0
         self.success_count = 0
+        self.consecutive_successes = 0
         self.perf = InspectionPerformanceCalc(self.sector_limit)
+        self.finished = False
         job.perf.children.append(self.perf)
         # TODO increase perf total because we have just added self.sector_limit sectors to check....
 
@@ -51,13 +57,23 @@ class CloseReader(DiskReader):
         self.perf.start()
         for _ in range(self.sector_limit):
             data = self.fd.read(SECTOR_SIZE)
-            if job.finished or not data:
+            if job.finished or not data or self.should_quit():
                 break
-            if data not in MEANINGLESS_SECTORS or self.success_count > (self.sector_count / 2):
+            if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
                 executor.submit(check_sector, data, self.fd.tell(), self)
             self.sector_count += 1
             executor.submit(self.perf.increment)
+        self.finished = True
         return
+    
+    def should_quit(self):
+        if self.sector_count > 0.02 * self.sector_limit \
+        and self.success_count < 0.25 * self.sector_count \
+        and self.consecutive_successes == 0:
+            return True
+            # TODO store info for later check if all else proves unsuccessful
+        else:
+            return False
 
 class ForwardCloseReader(CloseReader):
     def read(self, addr):
@@ -89,7 +105,7 @@ class PrimaryReader(DiskReader):
         self.fd.seek(addr)
         #executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
         while self.inspections:
-            print('Waiting for close inspections to complete before resuming express search at address ' + hex(self.fd.tell()))
+            #print('Waiting for close inspections to complete before resuming express search at address ' + hex(self.fd.tell()))
             time.sleep(3)
         job.perf.start()
         for _ in range(job.diskSize.total - addr):
@@ -164,19 +180,18 @@ class Job(QtCore.QObject):
             executor.submit(self.backward.read, self.addr)
 
     def finish(self):
-        self.finished = True
-        fd = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
-        out_file = open(self.rebuilt_file_path, 'wb')
-        """ for addr, sector in self.rebuilt_file:
-            out_file.write(sector) """
-        c = 0
-        for addresses in job.file.address_table:
-            fd.seek(addresses[0])
-            out_file.write(fd.read(SECTOR_SIZE))
-            out_file.flush()
-            c += 1
-        out_file.close()
-        self.finished_signal.emit(True)
+        with lock:
+            self.finished = True
+            fd = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
+            out_file = open(self.rebuilt_file_path, 'wb')
+            """ for addr, sector in self.rebuilt_file:
+                out_file.write(sector) """
+            for addresses in job.file.address_table:
+                fd.seek(addresses[0])
+                out_file.write(fd.read(SECTOR_SIZE))
+                out_file.flush()
+            out_file.close()
+            self.finished_signal.emit(True)
 
     def __init__(self, vol, file, do_logging, express):
         super().__init__()

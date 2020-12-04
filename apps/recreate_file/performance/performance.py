@@ -51,9 +51,7 @@ class ExpressPerformanceCalc():
             if not self.children:
                 return self.get_remaining_seconds()
             else:
-                children_seconds = 0
-                for c in self.children:
-                    children_seconds += c.get_remaining_seconds()      
+                children_seconds = max([c.get_remaining_seconds() for c in self.children])
                 if children_seconds > 0:      
                     result = str(timedelta(seconds=children_seconds)).split(".")[0] \
                         + " until skim is resumed...\n" \
@@ -61,7 +59,7 @@ class ExpressPerformanceCalc():
                 else:
                     result = 'Calculating delay before resuming skim...'
                 return result
-        else:
+        else:   
             return "Calculating time remaining..."
 
 class InspectionPerformanceCalc():
@@ -80,12 +78,19 @@ class InspectionPerformanceCalc():
     def increment(self):
         self.sectors_read += 1
         if self.sectors_read >= self.next_reset:
-            self.avg += (perf_counter() - self.cur_start)
-            self.avg = (self.avg / 2)
+            if self.avg > 0:
+                self.avg += (perf_counter() - self.cur_start)            
+                self.avg = (self.avg / 2)
+            else:
+                self.avg += (perf_counter() - self.cur_start)            
             self.start()
 
     def get_remaining_seconds(self):
         return (self.avg / self.sample_size) * (self.total_sectors_to_read - self.sectors_read)
 
     def get_remaining_estimate(self):
-        return str(timedelta(seconds=self.get_remaining_seconds())).split(".")[0] + " remaining"
+        seconds = self.get_remaining_seconds()
+        if seconds > 0:
+            return str(timedelta(seconds=self.get_remaining_seconds())).split(".")[0] + " remaining"
+        else:
+            return '...'

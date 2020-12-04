@@ -53,9 +53,10 @@ class MainWindow(QWidget):
         file_info.addWidget(QLabel(str(len(file.remaining_sectors)) + " sectors"), 2, 1)
 
         self.start_at = QLineEdit()
-        #self.start_at.setText('0')
+        self.start_at.setText('0')
+        self.start_at.setText('0x9b4d70800')
         #self.start_at.setText('0x404A8A99000')
-        self.start_at.setText('0x404c91a1800')
+        #self.start_at.setText('0x404c91a1800')
         #self.start_at.setText('0x4191FFA4800')
         #self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
@@ -135,24 +136,33 @@ class MainWindow(QWidget):
         def __init__(self, inspection, window):
             self.forward = inspection.forward
             self.backward = inspection.backward
-            self.forward_label = QLabel('Forward: ')
-            self.forward_bar = QProgressBar()
-            self.backward_label = QLabel('Backward: ')
-            self.backward_bar = QProgressBar()
-            self.forward_bar.setTextVisible(False)
-            self.backward_bar.setTextVisible(False)
             self.label_prefix = "Close inspection at " + hex(inspection.addr)
             self.label = QLabel(self.label_prefix)
             self.time_estimate = QLabel("Calculating time remaining...")
+            
+            self.inspections = [
+                {
+                    "name":"Forward",
+                    "process":self.forward,
+                    "bar":QProgressBar(),
+                    "label":QLabel(self.label_prefix)
+                },
+                {
+                    "name":"Backward",
+                    "process":self.backward,
+                    "bar":QProgressBar(),
+                    "label":QLabel(self.label_prefix)
+                }
+            ]   
+            
             bars = QHBoxLayout()
-            fwdbox = QVBoxLayout()
-            bkwdbox = QVBoxLayout()
-            fwdbox.addWidget(self.forward_bar)
-            fwdbox.addWidget(self.forward_label)
-            bkwdbox.addWidget(self.backward_bar)
-            bkwdbox.addWidget(self.backward_label)
-            bars.addLayout(fwdbox)
-            bars.addLayout(bkwdbox)
+
+            for inspection in self.inspections:
+                box = QVBoxLayout()
+                inspection['bar'].setTextVisible(False)
+                box.addWidget(inspection['bar'])
+                box.addWidget(inspection['label'])
+                bars.addLayout(box)
 
             window.inspections.addWidget(self.label)
             window.inspections.addLayout(bars)
@@ -165,27 +175,30 @@ class MainWindow(QWidget):
         def visualize_inspection_progress(self):
             while True: 
                 self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-
-                self.forward_bar.setValue(100 * self.forward.sector_count / self.forward.sector_limit)                
-                self.backward_bar.setValue(100 * self.backward.sector_count / self.backward.sector_limit)
-
-                self.forward_label.setText('Forward: ' + str(self.forward.sector_count) + '/' + str(self.forward.sector_limit) \
-                                            + '\n' + self.forward.perf.get_remaining_estimate())
-                self.backward_label.setText('Backward: ' + str(self.backward.sector_count) + '/' + str(self.backward.sector_limit) \
-                                            + '\n' + self.backward.perf.get_remaining_estimate())
-                sleep(0.2)                
-                if (self.forward.sector_count / self.forward.sector_limit) >= 1:
-                    self.forward_bar.setParent(None)
-                    self.forward_label.setParent(None)
-                if (self.backward.sector_count / self.backward.sector_limit) >= 1:
-                    self.backward_bar.setParent(None)
-                    self.backward_label.setParent(None)
-                if (self.forward.sector_count / self.forward.sector_limit) >= 1 and (self.backward.sector_count / self.backward.sector_limit) >= 1:
+                
+                for inspection in self.inspections:
+                    if not inspection['process'].finished:
+                        inspection['bar'].setValue(100 * inspection['process'].sector_count / inspection['process'].sector_limit)            
+                        if inspection['process'].perf.avg > 0:    
+                            inspection['label'].setText(inspection['name'] + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
+                                                + '\n' + inspection['process'].perf.get_remaining_estimate() \
+                                                + '\naverage read = ' + '{:.2f}'.format(inspection['process'].perf.avg) + ' s' \
+                                                + '\n' + '{:.4f}'.format(100 * inspection['process'].success_count / inspection['process'].sector_count) + "% success")
+                        else:
+                            inspection['label'].setText(inspection['name'] + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
+                                                + '\n...\n...\n...')
+                    else:
+                        inspection['bar'].setParent(None)
+                        inspection['label'].setParent(None)
+                        self.inspections.remove(inspection)
+                
+                if not self.inspections:
                     while executor._work_queue.qsize() > 0:
                         self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
                         sleep(0.5)
                     self.label.setParent(None)
-                    break
+                    break                
+                sleep(0.2)                
             return
                 
 
@@ -217,7 +230,7 @@ class MainWindow(QWidget):
         self.job.new_inspection_signal.connect(lambda inspection: self.inspection_visualizer(inspection, self))
         self.job.finished_signal.connect(self.finished)
 
-        self.job.ready_signal.connect(lambda: executor.submit(self.visualize_read_progress))
+        self.job.ready_signal.connect(lambda: executor.submit(self.visualize_skim_progress))
 
         self.start.setText('...')
         self.start.setDisabled(True)
@@ -244,7 +257,7 @@ class MainWindow(QWidget):
         + "%\n\n Testing equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
 
-    def visualize_read_progress(self):
+    def visualize_skim_progress(self):
         current_thread().name = "Visualize read progress"
         while True:
             #if not self.job.primary_reader.inspections:
