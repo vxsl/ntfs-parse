@@ -1,7 +1,7 @@
 # Standard library imports
 from datetime import timedelta
 from time import sleep
-from threading import Thread, current_thread
+from threading import current_thread
 from shutil import disk_usage
 from concurrent import futures
 from multiprocessing import cpu_count
@@ -9,7 +9,7 @@ from sys import exit
 
 # Third-party imports
 from PyQt5 import QtCore
-from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox
+from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox, QProgressDialog
 
 # Local imports
 from .recreate_file import initialize_job, SourceFile
@@ -28,9 +28,9 @@ class FinishedDialog(QMessageBox):
             #TODO not sure what to do here
         self.setStandardButtons(QMessageBox.Ok)
 
-class ChooseReferenceFileDialog(QFileDialog):
+class ChooseSourceFileDialog(QFileDialog):
     def __init__(self):
-        super(ChooseReferenceFileDialog, self).__init__()
+        super(ChooseSourceFileDialog, self).__init__()
         self.setWindowTitle("Choose source file")
 
 class MainWindow(QWidget):
@@ -38,11 +38,15 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("ntfs-toolbox")
 
-        dlg = ChooseReferenceFileDialog()
+        dlg = ChooseSourceFileDialog()
         dlg.exec()
         path = dlg.selectedFiles()[0]
 
         file = SourceFile(path)
+
+        self.job = initialize_job(True, True, selected_vol, file, executor)
+        self.init_avg = None
+        executor.submit(self.get_init_avg)
 
         file_info = QGridLayout()
         file_info.addWidget(QLabel('Source file name:'), 0, 0)
@@ -69,8 +73,13 @@ class MainWindow(QWidget):
         successes_hbox = QHBoxLayout()
         successes_hbox.addWidget(self.successes)
 
-        self.progress_bar = QProgressBar()
-        self.progress_bar.setTextVisible(False)
+        self.loading_label = QLabel("Loading")
+        self.loading = QProgressBar()
+        self.loading_label.setVisible(False)
+        self.loading.setVisible(False)
+
+        self.skim_progress_bar = QProgressBar()
+        self.skim_progress_bar.setTextVisible(False)
         self.progress_percentage = QLabel()
         self.sector_avg = QLabel()
 
@@ -90,6 +99,9 @@ class MainWindow(QWidget):
 
         grid = QGridLayout()
         grid.addLayout(file_info, 0, 0)
+
+        grid.addWidget(self.loading_label, 0, 1)
+        grid.addWidget(self.loading, 0, 2)
 
         grid.addWidget(self.express_mode, 7, 0)
         grid.addWidget(self.do_logging, 8, 0)
@@ -111,7 +123,7 @@ class MainWindow(QWidget):
         
         grid.addLayout(successes_hbox, 3, 0)
         grid.addWidget(self.current_addr, 7, 2)
-        grid.addWidget(self.progress_bar, 4, 0, 1, 3)
+        grid.addWidget(self.skim_progress_bar, 4, 0, 1, 3)
 
         grid.addWidget(self.start, 9, 0)
         grid.addLayout(start_at_hbox, 10, 0)
@@ -119,6 +131,13 @@ class MainWindow(QWidget):
         self.setLayout(grid)
         
         current_thread().name = "MAIN GUI THREAD"
+
+    def get_init_avg(self):
+        self.init_avg = self.job.test_run()
+        
+    def showEvent(self, event):
+        executor.submit(self.visualize_loading_progress)
+        event.accept()
 
     def closeEvent(self, event):
         if not self.job.finished:
@@ -168,11 +187,11 @@ class MainWindow(QWidget):
             window.inspections.addLayout(bars)
             window.inspections_box.setLayout(window.inspections)
             
-            #Thread(target=self.visualize_inspection_progress).start()
             executor.submit(self.visualize_inspection_progress)
             return
 
         def visualize_inspection_progress(self):
+
             while True: 
                 self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
                 
@@ -212,25 +231,36 @@ class MainWindow(QWidget):
         msg.exec()
 
 
+    def visualize_loading_progress(self):
+        if not self.init_avg:           
+            self.skim_progress_bar.setTextVisible(True)
+            self.skim_progress_bar.setFormat("Loading...")
+            self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
+
+        while not self.init_avg:
+            self.skim_progress_bar.setValue(self.job.loading_progress)
+            sleep(0.2)
+
+        self.skim_progress_bar.setTextVisible(False)
+        self.skim_progress_bar.setFormat(None)
+
     def go(self, selected_vol, file):
+
 
         start_at_input = self.start_at.text()
         try:
             if 0 <= int(start_at_input, 16) <= disk_usage(selected_vol + ':\\').total:
                 start_at = int(start_at_input, 16)
-            else: 
+            else:  
                 self.invalid_address(start_at_input, selected_vol)
                 return
         except ValueError:
             self.invalid_address(start_at_input, selected_vol)
             return
 
-        self.job = initialize_job(self.do_logging, self.express_mode.isChecked(), selected_vol, file, executor)
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(lambda inspection: self.inspection_visualizer(inspection, self))
         self.job.finished_signal.connect(self.finished)
-
-        self.job.ready_signal.connect(lambda: executor.submit(self.visualize_skim_progress))
 
         self.start.setText('...')
         self.start.setDisabled(True)
@@ -238,12 +268,14 @@ class MainWindow(QWidget):
         self.express_mode.setDisabled(True)
         self.do_logging.setDisabled(True)
 
-        #Thread(name='visualize read progress',target=self.visualize_read_progress).start()
+        while self.job.loading_progress < 100:
+            sleep(0.2)
 
-        #recreate_main = Thread(name='recreate main',target=self.job.primary_reader.read,args=[start_at])
-        executor.submit(self.job.begin, start_at)        
-        #self.job.perf.start()
-        #recreate_main.start()
+        self.job.begin(start_at, self.init_avg)               
+        executor.submit(self.visualize_skim_progress)
+
+    def loading_progress(self, progress):
+        self.loading.setValue(progress)
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
@@ -258,15 +290,12 @@ class MainWindow(QWidget):
         + " remaining sectors..."))
 
     def visualize_skim_progress(self):
-        current_thread().name = "Visualize read progress"
+        current_thread().name = "Visualize read progress"        
         while True:
-            #if not self.job.primary_reader.inspections:
-            #progress = self.job.primary_reader.fd.tell()
             progress =  self.job.perf.sectors_read
-            #percent = 100 * progress / self.job.diskSize.total
             percent = 100 * progress / self.job.perf.total_sectors_to_read
             self.progress_percentage.setText("{:.3f}".format(percent) + "%")
-            self.progress_bar.setValue(percent)
+            self.skim_progress_bar.setValue(percent)
             self.sector_avg.setText("Average time to traverse " \
             + str(self.job.perf.sample_size * self.job.perf.skip_size) \
             + " sectors (" + str(self.job.perf.sample_size * self.job.perf.skip_size * 512 / 1000000) \

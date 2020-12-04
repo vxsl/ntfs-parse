@@ -102,6 +102,7 @@ class PrimaryReader(DiskReader):
         self.inspections = []       
 
     def read(self, addr):
+        current_thread().name = "Main program thread"
         self.fd.seek(addr)
         #executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
         while self.inspections:
@@ -135,7 +136,7 @@ class Job(QtCore.QObject):
     success_signal = QtCore.pyqtSignal(int)
     finished_signal = QtCore.pyqtSignal(bool)
     new_inspection_signal = QtCore.pyqtSignal(object)
-    ready_signal = QtCore.pyqtSignal(bool)
+    #ready_signal = QtCore.pyqtSignal(bool)
 
     def update_log(self):
         for i in range(len(self.rebuilt_file)):
@@ -152,20 +153,19 @@ class Job(QtCore.QObject):
         test_perf = ExpressPerformanceCalc(self.primary_reader.jump_size, self.diskSize.total, SECTOR_SIZE)
         self.primary_reader.fd.seek(0)
         test_perf.start()
-        for _ in range(test_perf.sample_size):
-            print(_)
+        for _ in range(test_perf.sample_size + 1):
             data = self.primary_reader.fd.read(SECTOR_SIZE)
             executor.submit(fake_function, data)
             test_perf.increment()
+            self.loading_progress = 100 * _ / test_perf.sample_size
             self.primary_reader.fd.seek(self.primary_reader.jump_size, 1)
         return test_perf.avg
 
-    def begin(self, start_at):
-        current_thread().name = "Main program thread"
-        init_avg = self.test_run()
+    def begin(self, start_at, init_avg):
+        
         self.perf = ExpressPerformanceCalc(self.primary_reader.jump_size, self.diskSize.total, SECTOR_SIZE, init_avg)
-        self.ready_signal.emit(True)
-        self.primary_reader.read(start_at)
+        #self.ready_signal.emit(True)
+        executor.submit(self.primary_reader.read, start_at)
 
     class close_inspection:
         def __init__(self, addr):
@@ -196,6 +196,7 @@ class Job(QtCore.QObject):
     def __init__(self, vol, file, do_logging, express):
         super().__init__()
         self.finished = False
+        self.loading_progress = 0
         self.express = express
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.diskSize = disk_usage(vol + ':\\')
@@ -236,16 +237,6 @@ class SourceFile():
         split = path.split('/')
         self.dir = '/'.join(split[0:(len(split) - 1)])
         self.name = split[len(split) - 1]
-
-    """ def get_unique_sector_index(self, sector):
-
-        occurrences = [i for i, s in enumerate(self.sectors) if s == sector] # get all occurences of this data
-        if len(occurrences) > 1:
-            for index in occurrences:
-                if job.rebuilt_file[index] == None:
-                    return index
-        else:
-            return occurrences[0] """
 
 
     def to_sectors(self, path):
