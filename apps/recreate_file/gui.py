@@ -1,20 +1,14 @@
 # Standard library imports
-from datetime import timedelta
-from time import sleep
 from threading import current_thread
 from shutil import disk_usage
-from concurrent import futures
-from multiprocessing import cpu_count
-from sys import exit
+import sys
 
 # Third-party imports
 from PyQt5 import QtCore
-from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox, QProgressDialog
+from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox
 
 # Local imports
 from .recreate_file import initialize_job, SourceFile
-
-executor = futures.ThreadPoolExecutor(max_workers=(cpu_count()))
 
 class FinishedDialog(QMessageBox):
     def __init__(self, success, path):
@@ -42,19 +36,32 @@ class MainWindow(QWidget):
         dlg.exec()
         path = dlg.selectedFiles()[0]
 
-        file = SourceFile(path)
+        self.file = SourceFile(path)
+        self.selected_vol = selected_vol
+        
+        self.job_thread = QtCore.QThread()
+        self.job_thread.start()
+        
+        self.job = initialize_job(True, self.selected_vol, self.file)
+        self.job.moveToThread(self.job_thread)
+        self.job.do_test_run.emit()
 
-        self.job = initialize_job(True, True, selected_vol, file, executor)
         self.init_avg = None
-        executor.submit(self.get_init_avg)
+        #executor.submit(self.get_init_avg)
+        #self.job.test_run()
+
+        self.job.loading_progress_signal.connect(self.loading_gui_update)
+        self.job.loading_complete_signal.connect(self.loading_complete)
+
+        self.chosen_address = None
 
         file_info = QGridLayout()
         file_info.addWidget(QLabel('Source file name:'), 0, 0)
-        file_info.addWidget(QLabel(file.name), 0, 1)
+        file_info.addWidget(QLabel(self.file.name), 0, 1)
         file_info.addWidget(QLabel('Source file location:'), 1, 0)
-        file_info.addWidget(QLabel(file.dir), 1, 1)
+        file_info.addWidget(QLabel(self.file.dir), 1, 1)
         file_info.addWidget(QLabel('Size:'), 2, 0)
-        file_info.addWidget(QLabel(str(len(file.remaining_sectors)) + " sectors"), 2, 1)
+        file_info.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
 
         self.start_at = QLineEdit()
         self.start_at.setText('0')
@@ -69,7 +76,7 @@ class MainWindow(QWidget):
         start_at_hbox.addWidget(self.start_at)
 
         self.successes = QLabel()
-        self.successes.setText("0/" + (str(len(file.remaining_sectors))))
+        self.successes.setText("0/" + (str(len(self.file.remaining_sectors))))
         successes_hbox = QHBoxLayout()
         successes_hbox.addWidget(self.successes)
 
@@ -95,7 +102,7 @@ class MainWindow(QWidget):
         self.current_addr.clicked.connect(lambda: self.current_addr.setText(hex(self.job.primary_reader.fd.tell())))
 
         self.start = QPushButton('Start')
-        self.start.clicked.connect(lambda: self.go(selected_vol, file))
+        self.start.clicked.connect(self.go)
 
         grid = QGridLayout()
         grid.addLayout(file_info, 0, 0)
@@ -132,11 +139,13 @@ class MainWindow(QWidget):
         
         current_thread().name = "MAIN GUI THREAD"
 
-    def get_init_avg(self):
-        self.init_avg = self.job.test_run()
         
     def showEvent(self, event):
-        executor.submit(self.visualize_loading_progress)
+        #executor.submit(self.visualize_loading_progress)
+        if not self.init_avg:           
+            self.skim_progress_bar.setTextVisible(True)
+            self.skim_progress_bar.setFormat("Loading...")
+            self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
         event.accept()
 
     def closeEvent(self, event):
@@ -147,11 +156,11 @@ class MainWindow(QWidget):
             if reply == QMessageBox.Yes:
                 event.accept()
                 print('Window closed')                
-                exit()
+                sys.exit()
             else:
                 event.ignore()
 
-    class inspection_visualizer:
+    class inspection_gui:
         def __init__(self, inspection, window):
             self.forward = inspection.forward
             self.backward = inspection.backward
@@ -159,66 +168,65 @@ class MainWindow(QWidget):
             self.label = QLabel(self.label_prefix)
             self.time_estimate = QLabel("Calculating time remaining...")
             
-            self.inspections = [
-                {
-                    "name":"Forward",
+            self.inspections = {
+                "forward": {
                     "process":self.forward,
                     "bar":QProgressBar(),
                     "label":QLabel(self.label_prefix)
                 },
-                {
-                    "name":"Backward",
+                "backward": {
                     "process":self.backward,
                     "bar":QProgressBar(),
                     "label":QLabel(self.label_prefix)
                 }
-            ]   
+            }
             
             bars = QHBoxLayout()
 
-            for inspection in self.inspections:
+            for key in self.inspections:
                 box = QVBoxLayout()
-                inspection['bar'].setTextVisible(False)
-                box.addWidget(inspection['bar'])
-                box.addWidget(inspection['label'])
+                self.inspections[key]['bar'].setTextVisible(False)
+                box.addWidget(self.inspections[key]['bar'])
+                box.addWidget(self.inspections[key]['label'])
                 bars.addLayout(box)
 
             window.inspections.addWidget(self.label)
             window.inspections.addLayout(bars)
             window.inspections_box.setLayout(window.inspections)
             
-            executor.submit(self.visualize_inspection_progress)
+            self.forward.inspection_progress_signal.connect(lambda: self.inspection_gui_update('forward'))
+            self.backward.inspection_progress_signal.connect(lambda: self.inspection_gui_update('backward'))
+
+            #executor.submit(self.inspection_gui_update)
             return
 
-        def visualize_inspection_progress(self):
-
-            while True: 
-                self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-                
-                for inspection in self.inspections:
-                    if not inspection['process'].finished:
-                        inspection['bar'].setValue(100 * inspection['process'].sector_count / inspection['process'].sector_limit)            
-                        if inspection['process'].perf.avg > 0:    
-                            inspection['label'].setText(inspection['name'] + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
-                                                + '\n' + inspection['process'].perf.get_remaining_estimate() \
-                                                + '\naverage read = ' + '{:.2f}'.format(inspection['process'].perf.avg) + ' s' \
-                                                + '\n' + '{:.4f}'.format(100 * inspection['process'].success_count / inspection['process'].sector_count) + "% success")
-                        else:
-                            inspection['label'].setText(inspection['name'] + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
-                                                + '\n...\n...\n...')
-                    else:
-                        inspection['bar'].setParent(None)
-                        inspection['label'].setParent(None)
-                        self.inspections.remove(inspection)
-                
-                if not self.inspections:
-                    while executor._work_queue.qsize() > 0:
-                        self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-                        sleep(0.5)
-                    self.label.setParent(None)
-                    break                
-                sleep(0.2)                
-            return
+        def inspection_gui_update(self, which):
+            #self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
+            
+            #for inspection in self.inspections:
+            inspection = self.inspections[which]
+            if not inspection['process'].finished:
+                inspection['bar'].setValue(100 * inspection['process'].sector_count / inspection['process'].sector_limit)            
+                if inspection['process'].perf.avg > 0:    
+                    inspection['label'].setText(which + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
+                                        + '\n' + inspection['process'].perf.get_remaining_estimate() \
+                                        + '\naverage read = ' + '{:.2f}'.format(inspection['process'].perf.avg) + ' s' \
+                                        + '\n' + '{:.4f}'.format(100 * inspection['process'].success_count / inspection['process'].sector_count) + "% success")
+                else:
+                    inspection['label'].setText(which + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
+                                        + '\n...\n...\n...')
+            else:
+                inspection['bar'].setParent(None)
+                inspection['label'].setParent(None)
+                #self.inspections.remove(inspection)
+                del inspection
+            
+            """ if not self.inspections:
+                while executor._work_queue.qsize() > 0:
+                    self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
+                    sleep(0.5)
+                self.label.setParent(None)
+                break   """              
                 
 
     def invalid_address(self, invalid_input, selected_vol):
@@ -230,49 +238,49 @@ class MainWindow(QWidget):
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
-
-    def visualize_loading_progress(self):
-        if not self.init_avg:           
-            self.skim_progress_bar.setTextVisible(True)
-            self.skim_progress_bar.setFormat("Loading...")
-            self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
-
-        while not self.init_avg:
-            self.skim_progress_bar.setValue(self.job.loading_progress)
-            sleep(0.2)
-
+    def loading_complete(self, init_avg):        
+        self.init_avg = init_avg
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
+        if self.chosen_address:
+            self.go()
 
-    def go(self, selected_vol, file):
+    def loading_gui_update(self, progress):
+        self.skim_progress_bar.setValue(progress)
 
-
-        start_at_input = self.start_at.text()
+    def validate_hex(self, inp):
         try:
-            if 0 <= int(start_at_input, 16) <= disk_usage(selected_vol + ':\\').total:
-                start_at = int(start_at_input, 16)
+            if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
+                self.start.setText('...')
+                self.start.setDisabled(True)
+                self.start_at.setDisabled(True)
+                self.express_mode.setDisabled(True)
+                self.do_logging.setDisabled(True)                
+                return int(inp, 16)
             else:  
-                self.invalid_address(start_at_input, selected_vol)
-                return
+                self.invalid_address(inp, self.selected_vol)
+                return None
         except ValueError:
-            self.invalid_address(start_at_input, selected_vol)
-            return
-
+            self.invalid_address(inp, self.selected_vol)
+            return None
+            
+    def go(self):
+        
+        if not self.chosen_address:
+            user_input = self.start_at.text()
+            validated_start_address = self.validate_hex(user_input)
+            if not validated_start_address:
+                self.invalid_address(user_input, self.selected_vol)
+                return
+            elif not self.init_avg:
+                self.chosen_address = validated_start_address
+                return
+            
         self.job.success_signal.connect(self.visualize_file_progress)
-        self.job.new_inspection_signal.connect(lambda inspection: self.inspection_visualizer(inspection, self))
+        self.job.new_inspection_signal.connect(lambda inspection: self.inspection_gui(inspection, self))
         self.job.finished_signal.connect(self.finished)
-
-        self.start.setText('...')
-        self.start.setDisabled(True)
-        self.start_at.setDisabled(True)
-        self.express_mode.setDisabled(True)
-        self.do_logging.setDisabled(True)
-
-        while self.job.loading_progress < 100:
-            sleep(0.2)
-
-        self.job.begin(start_at, self.init_avg)               
-        executor.submit(self.visualize_skim_progress)
+        self.job.skim_progress_signal.connect(self.skim_gui_update)
+        self.job.start.emit([self.chosen_address, self.init_avg])               
 
     def loading_progress(self, progress):
         self.loading.setValue(progress)
@@ -289,16 +297,14 @@ class MainWindow(QWidget):
         + "%\n\n Testing equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
 
-    def visualize_skim_progress(self):
-        current_thread().name = "Visualize read progress"        
-        while True:
-            progress =  self.job.perf.sectors_read
-            percent = 100 * progress / self.job.perf.total_sectors_to_read
-            self.progress_percentage.setText("{:.3f}".format(percent) + "%")
-            self.skim_progress_bar.setValue(percent)
-            self.sector_avg.setText("Average time to traverse " \
-            + str(self.job.perf.sample_size * self.job.perf.skip_size) \
-            + " sectors (" + str(self.job.perf.sample_size * self.job.perf.skip_size * 512 / 1000000) \
-            + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
-            self.time_remaining.setText(self.job.perf.get_remaining_estimate())
-            sleep(0.2)
+    def skim_gui_update(self):
+        #print('gui update')
+        progress =  self.job.perf.sectors_read
+        percent = 100 * progress / self.job.perf.total_sectors_to_read
+        self.progress_percentage.setText("{:.3f}".format(percent) + "%")
+        self.skim_progress_bar.setValue(percent)
+        self.sector_avg.setText("Average time to traverse " \
+        + str(self.job.perf.sample_size * self.job.perf.skip_size) \
+        + " sectors (" + str(self.job.perf.sample_size * self.job.perf.skip_size * 512 / 1000000) \
+        + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
+        self.time_remaining.setText(self.job.perf.get_remaining_estimate())

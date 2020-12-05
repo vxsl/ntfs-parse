@@ -7,7 +7,7 @@ SAMPLE_SIZE = 1000
 
 class ExpressPerformanceCalc():
     
-    def __init__(self, skip_size, disk_size, sector_size, init_avg=0):
+    def __init__(self, skip_size, disk_size, sector_size, sample_size=SAMPLE_SIZE, init_avg=0):
         
         global SECTOR_SIZE
         SECTOR_SIZE = sector_size
@@ -18,7 +18,7 @@ class ExpressPerformanceCalc():
         self.cur_incr = 0
         self.skip_size = skip_size
         self.sectors_read = 0        
-        self.sample_size = SAMPLE_SIZE
+        self.sample_size = sample_size
         self.total_sectors_to_read = ceil(disk_size / skip_size)
 
     def start(self):
