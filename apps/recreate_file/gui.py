@@ -44,16 +44,6 @@ class MainWindow(QWidget):
         
         self.job = initialize_job(True, self.selected_vol, self.file)
         self.job.moveToThread(self.job_thread)
-        self.job.do_test_run.emit()
-
-        self.init_avg = None
-        #executor.submit(self.get_init_avg)
-        #self.job.test_run()
-
-        self.job.loading_progress_signal.connect(self.loading_gui_update)
-        self.job.loading_complete_signal.connect(self.loading_complete)
-
-        self.chosen_address = None
 
         file_info = QGridLayout()
         file_info.addWidget(QLabel('Source file name:'), 0, 0)
@@ -80,11 +70,6 @@ class MainWindow(QWidget):
         successes_hbox = QHBoxLayout()
         successes_hbox.addWidget(self.successes)
 
-        self.loading_label = QLabel("Loading")
-        self.loading = QProgressBar()
-        self.loading_label.setVisible(False)
-        self.loading.setVisible(False)
-
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
         self.progress_percentage = QLabel()
@@ -102,13 +87,10 @@ class MainWindow(QWidget):
         self.current_addr.clicked.connect(lambda: self.current_addr.setText(hex(self.job.primary_reader.fd.tell())))
 
         self.start = QPushButton('Start')
-        self.start.clicked.connect(self.go)
+        self.start.clicked.connect(self.request_test_run)
 
         grid = QGridLayout()
         grid.addLayout(file_info, 0, 0)
-
-        grid.addWidget(self.loading_label, 0, 1)
-        grid.addWidget(self.loading, 0, 2)
 
         grid.addWidget(self.express_mode, 7, 0)
         grid.addWidget(self.do_logging, 8, 0)
@@ -138,15 +120,6 @@ class MainWindow(QWidget):
         self.setLayout(grid)
         
         current_thread().name = "MAIN GUI THREAD"
-
-        
-    def showEvent(self, event):
-        #executor.submit(self.visualize_loading_progress)
-        if not self.init_avg:           
-            self.skim_progress_bar.setTextVisible(True)
-            self.skim_progress_bar.setFormat("Loading...")
-            self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
-        event.accept()
 
     def closeEvent(self, event):
         if not self.job.finished:
@@ -236,17 +209,7 @@ class MainWindow(QWidget):
         msg.setInformativeText('Please enter a value between 0x0 and ' \
             + str(hex(disk_usage(selected_vol + ':\\').total).upper() + '.'))
         msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec()
-
-    def loading_complete(self, init_avg):        
-        self.init_avg = init_avg
-        self.skim_progress_bar.setTextVisible(False)
-        self.skim_progress_bar.setFormat(None)
-        if self.chosen_address:
-            self.go()
-
-    def loading_gui_update(self, progress):
-        self.skim_progress_bar.setValue(progress)
+        msg.exec()       
 
     def validate_hex(self, inp):
         try:
@@ -264,26 +227,30 @@ class MainWindow(QWidget):
             self.invalid_address(inp, self.selected_vol)
             return None
             
-    def go(self):
+    def request_test_run(self):
+
+        user_input = self.start_at.text()
+        validated_start_address = self.validate_hex(user_input)
+        if not validated_start_address:
+            self.invalid_address(user_input, self.selected_vol)
+            return
         
-        if not self.chosen_address:
-            user_input = self.start_at.text()
-            validated_start_address = self.validate_hex(user_input)
-            if not validated_start_address:
-                self.invalid_address(user_input, self.selected_vol)
-                return
-            elif not self.init_avg:
-                self.chosen_address = validated_start_address
-                return
-            
+        self.skim_progress_bar.setTextVisible(True)
+        self.skim_progress_bar.setFormat("Loading...")
+        self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
+        self.job.do_test_run.emit()
+        self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
+        self.job.loading_complete_signal.connect(lambda init_avg: self.go(init_avg, validated_start_address))
+
+    def go(self, init_avg, start_at):
+        
+        self.skim_progress_bar.setTextVisible(False)
+        self.skim_progress_bar.setFormat(None)
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(lambda inspection: self.inspection_gui(inspection, self))
         self.job.finished_signal.connect(self.finished)
         self.job.skim_progress_signal.connect(self.skim_gui_update)
-        self.job.start.emit([self.chosen_address, self.init_avg])               
-
-    def loading_progress(self, progress):
-        self.loading.setValue(progress)
+        self.job.start.emit([start_at, init_avg])               
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
@@ -304,7 +271,7 @@ class MainWindow(QWidget):
         self.progress_percentage.setText("{:.3f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
         self.sector_avg.setText("Average time to traverse " \
-        + str(self.job.perf.sample_size * self.job.perf.skip_size) \
-        + " sectors (" + str(self.job.perf.sample_size * self.job.perf.skip_size * 512 / 1000000) \
+        + str(self.job.perf.sample_size * self.job.perf.jump_size) \
+        + " sectors (" + str(self.job.perf.sample_size * self.job.perf.jump_size * 512 / 1000000) \
         + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
         self.time_remaining.setText(self.job.perf.get_remaining_estimate())
