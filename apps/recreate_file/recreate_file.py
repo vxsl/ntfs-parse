@@ -2,7 +2,7 @@ import time, os
 from shutil import disk_usage
 from threading import Lock, current_thread
 from PyQt5 import QtCore
-from .performance.performance import ExpressPerformanceCalc, InspectionPerformanceCalc
+from .performance.performance import PerformanceCalculator, InspectionPerformanceCalc
 from concurrent import futures
 from multiprocessing import cpu_count
 
@@ -23,7 +23,7 @@ def check_sector(inp, addr, close_reader=None):
         if close_reader:
             close_reader.success_count += 1
             close_reader.consecutive_successes += 1
-        elif not job.primary_reader.inspection_in_progress(addr):
+        elif job.primary_reader.express and not job.primary_reader.inspection_in_progress(addr):
             job.begin_close_inspection(actual_address)
         if not any(job.file.remaining_sectors) and not job.finished:
             job.finish()
@@ -53,7 +53,6 @@ class CloseReader(DiskReader):
         self.perf = InspectionPerformanceCalc(self.sector_limit)
         self.finished = False
         job.perf.children.append(self.perf)
-        # TODO increase perf total because we have just added self.sector_limit sectors to check....
 
     def read(self, addr):
         current_thread().name = ("Close reader at " + hex(addr))
@@ -87,6 +86,7 @@ class ForwardCloseReader(CloseReader):
             job.perf.children.remove(self.perf)
             job.primary_reader.inspections.remove((hex(addr), self))
         current_thread().name = ("Control returned from a forward inspection at " + hex(addr))
+        job.resume_primary_reader_signal.emit()
         return
 
 
@@ -97,35 +97,52 @@ class BackwardCloseReader(CloseReader):
             job.perf.children.remove(self.perf)
             job.primary_reader.inspections.remove((hex(addr), self))
         current_thread().name = ("Control returned from a backward inspection at " + hex(addr))
+        job.resume_primary_reader_signal.emit()
         return
 
 class PrimaryReader(DiskReader):
 
-    def __init__(self, disk_path, total_sectors, jump_size):
+    resume_signal = QtCore.pyqtSignal()
+
+    def __init__(self, disk_path, **kwargs):
         super().__init__(disk_path)
-        self.jump_size = jump_size * SECTOR_SIZE
+        try:
+            self.jump_size = kwargs['jump_size'] * SECTOR_SIZE
+            self.express = True
+        except KeyError:
+            self.jump_size = 0
+            self.express = False
         self.inspections = []       
+        self.resume_at = None
+        self.resume_signal.connect(self.request_resume)
 
-    def read(self, addr):
+    def request_resume(self):
+        if self.inspections:
+            return
+        else:
+            self.read(self.resume_at) # only resume if all children are finished
+
+    def read(self, start_at):
         current_thread().name = "Main program thread"
-        self.fd.seek(addr)
-        #executor = futures.ThreadPoolExecutor(thread_name_prefix="Express Primary Reader Pool", max_workers=(cpu_count()))
-        while self.inspections:
-            #print('Waiting for close inspections to complete before resuming express search at address ' + hex(self.fd.tell()))
-            time.sleep(3)
+        self.fd.seek(start_at)
         job.perf.start()
-        for _ in range(job.diskSize.total - addr):
-            data = self.fd.read(SECTOR_SIZE)
-            if job.finished or not data or self.inspections:
-                break
-            if data not in MEANINGLESS_SECTORS:
-                executor.submit(check_sector, data, self.fd.tell())
-            executor.submit(job.perf.increment)
-            job.skim_progress_signal.emit()
-            self.fd.seek(self.jump_size, 1)
 
-        if self.inspections and not job.finished:
-            self.read(self.fd.tell())
+        try:
+            while True:
+                data = self.fd.read(SECTOR_SIZE)
+                if job.finished or not data or self.inspections:
+                    break
+                if data not in MEANINGLESS_SECTORS:
+                    executor.submit(check_sector, data, self.fd.tell())
+                executor.submit(job.perf.increment)
+                job.skim_progress_signal.emit()
+                self.fd.seek(self.jump_size, 1)
+
+            if self.inspections and not job.finished:
+                self.resume_at = self.fd.tell()
+        except: # TODO what type of exception is raised when fd reads past EOF?
+            pass
+
         #job.finished_signal.emit(False)
 
     def inspection_in_progress(self, addr):
@@ -135,6 +152,8 @@ class PrimaryReader(DiskReader):
             if lower_limit <= addr and addr <= upper_limit:
                 return True
         return False
+
+
 
 class Job(QtCore.QObject):
 
@@ -149,7 +168,40 @@ class Job(QtCore.QObject):
     skim_progress_signal = QtCore.pyqtSignal()
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(float)
-    
+
+    def __init__(self, vol, file, do_logging, express):
+        super().__init__()
+        self.do_test_run.connect(self.test_run)
+        self.start.connect(self.run)
+        self.finished = False
+        self.loading_progress = 0
+        self.disk_path = r"\\." + "\\" + vol + ":"
+        self.volume_size = disk_usage(vol + ':\\')
+        self.file = file
+        self.done_sectors = 0
+        self.total_sectors = len(file.remaining_sectors)
+        self.rebuilt_file = [None] * self.total_sectors
+        #self.finished_signal.connect(self.build_file)
+
+        if express:
+            jump_size = self.total_sectors // 2
+            self.primary_reader = PrimaryReader(self.disk_path, jump_size=jump_size)
+        else:
+            self.primary_reader = PrimaryReader(self.disk_path)
+
+        if do_logging == True:
+            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
+            os.makedirs(self.dir_name, mode=0o755)
+            self.log = open(self.dir_name + '/' + self.file.name + ".log", 'w')
+        else:
+            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
+            os.makedirs(self.dir_name, mode=0o755)
+            self.log = open(self.dir_name + '/' + self.file.name + ".log", 'w')
+            # do something...
+            print("Undefined behaviour")
+
+        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
+
     def update_log(self):
         for i in range(len(self.rebuilt_file)):
             self.log.write("Sector " + i + ":\t\t" + self.rebuilt_file[i][0])
@@ -163,7 +215,11 @@ class Job(QtCore.QObject):
         def fake_function(inp):
             _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
         
-        test_perf = ExpressPerformanceCalc(self.primary_reader.jump_size, self.diskSize.total, SECTOR_SIZE, 100)
+        if self.primary_reader.express:
+            test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, sample_size=100, jump_size=self.primary_reader.jump_size)
+        else:
+            test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, sample_size=100)
+
         self.primary_reader.fd.seek(0)
         test_perf.start()
         for _ in range(test_perf.sample_size + 1):
@@ -179,7 +235,10 @@ class Job(QtCore.QObject):
     def run(self, params): 
         start_at = params[0]
         init_avg = params[1]  
-        self.perf = ExpressPerformanceCalc(self.primary_reader.jump_size, self.diskSize.total, SECTOR_SIZE, 1000, init_avg) # TODO implement kwargs so we don't have to put 1000 here
+        if self.primary_reader.express:
+            self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, jump_size=self.primary_reader.jump_size, init_avg=init_avg) # TODO implement kwargs so we don't have to put 1000 here
+        else:
+            self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, init_avg=init_avg)
         self.primary_reader.read(start_at)
 
     class close_inspection:
@@ -189,8 +248,6 @@ class Job(QtCore.QObject):
             self.backward = BackwardCloseReader()
             job.primary_reader.inspections.append((hex(self.addr), self.forward))
             job.primary_reader.inspections.append((hex(self.addr), self.backward))
-            #Thread(name='close inspect forward @' + self.addr,target=forward.read,args=[self.addr]).start()
-            #Thread(name='close inspect backward @' + self.addr,target=backward.read,args=[self.addr]).start()
             executor.submit(self.forward.read, self.addr)
             executor.submit(self.backward.read, self.addr)
 
@@ -207,39 +264,6 @@ class Job(QtCore.QObject):
                 out_file.flush()
             out_file.close()
             self.finished_signal.emit(True)
-
-    def __init__(self, vol, file, do_logging):
-        super().__init__()
-        self.do_test_run.connect(self.test_run)
-        self.start.connect(self.run)
-        self.finished = False
-        self.loading_progress = 0
-        self.disk_path = r"\\." + "\\" + vol + ":"
-        self.diskSize = disk_usage(vol + ':\\')
-        self.file = file
-        self.done_sectors = 0
-        self.total_sectors = len(file.remaining_sectors)
-        self.rebuilt_file = [None] * self.total_sectors
-        #self.finished_signal.connect(self.build_file)
-
-        skip_size = self.total_sectors // 2
-        self.primary_reader = PrimaryReader(self.disk_path, self.total_sectors, skip_size)
-
-        if do_logging == True:
-            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
-            os.makedirs(self.dir_name, mode=0o755)
-            self.log = open(self.dir_name + '/' + self.file.name + ".log", 'w')
-        else:
-            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
-            os.makedirs(self.dir_name, mode=0o755)
-            self.log = open(self.dir_name + '/' + self.file.name + ".log", 'w')
-            # do something...
-            print("Undefined behaviour")
-
-        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
-
-
-
 
 class SourceFile():
     def __init__(self, path):
@@ -265,8 +289,8 @@ class SourceFile():
                 result.append((bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
         return result
 
-def initialize_job(do_logging, selected_vol, file):
+def initialize_job(do_logging, selected_vol, file, express):
     global job
-    job = Job(selected_vol, file, do_logging)
+    job = Job(selected_vol, file, do_logging, express)
     return job
 

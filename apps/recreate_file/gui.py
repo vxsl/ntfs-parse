@@ -38,12 +38,6 @@ class MainWindow(QWidget):
 
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
-        
-        self.job_thread = QtCore.QThread()
-        self.job_thread.start()
-        
-        self.job = initialize_job(True, self.selected_vol, self.file)
-        self.job.moveToThread(self.job_thread)
 
         file_info = QGridLayout()
         file_info.addWidget(QLabel('Source file name:'), 0, 0)
@@ -55,10 +49,10 @@ class MainWindow(QWidget):
 
         self.start_at = QLineEdit()
         self.start_at.setText('0')
-        self.start_at.setText('0x9b4d70800')
+        #self.start_at.setText('0x9b4d70800')
         #self.start_at.setText('0x404A8A99000')
         #self.start_at.setText('0x404c91a1800')
-        #self.start_at.setText('0x4191FFA4800')
+        self.start_at.setText('0x4191FFA4800')
         #self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
         start_at_label = QLabel("Start at address (search forward): ")
@@ -69,6 +63,7 @@ class MainWindow(QWidget):
         self.successes.setText("0/" + (str(len(self.file.remaining_sectors))))
         successes_hbox = QHBoxLayout()
         successes_hbox.addWidget(self.successes)
+
 
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
@@ -221,23 +216,27 @@ class MainWindow(QWidget):
                 self.do_logging.setDisabled(True)                
                 return int(inp, 16)
             else:  
-                self.invalid_address(inp, self.selected_vol)
                 return None
         except ValueError:
-            self.invalid_address(inp, self.selected_vol)
             return None
             
     def request_test_run(self):
 
         user_input = self.start_at.text()
         validated_start_address = self.validate_hex(user_input)
-        if not validated_start_address:
+        if validated_start_address is None:
             self.invalid_address(user_input, self.selected_vol)
             return
         
         self.skim_progress_bar.setTextVisible(True)
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
+        
+        self.job_thread = QtCore.QThread()
+        self.job_thread.start()        
+        self.job = initialize_job(True, self.selected_vol, self.file, self.express_mode.isChecked())
+        self.job.moveToThread(self.job_thread)
+
         self.job.do_test_run.emit()
         self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
         self.job.loading_complete_signal.connect(lambda init_avg: self.go(init_avg, validated_start_address))
@@ -268,7 +267,7 @@ class MainWindow(QWidget):
         #print('gui update')
         progress =  self.job.perf.sectors_read
         percent = 100 * progress / self.job.perf.total_sectors_to_read
-        self.progress_percentage.setText("{:.3f}".format(percent) + "%")
+        self.progress_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
         self.sector_avg.setText("Average time to traverse " \
         + str(self.job.perf.sample_size * self.job.perf.jump_size) \
