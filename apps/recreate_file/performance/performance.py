@@ -103,6 +103,6 @@ class InspectionPerformanceCalc():
     def get_remaining_estimate(self):
         seconds = self.get_remaining_seconds()
         if seconds > 0:
-            return str(timedelta(seconds=self.get_remaining_seconds())).split(".")[0] + " remaining"
+            return (str(timedelta(seconds=self.get_remaining_seconds())).split(".")[0] + " remaining", self.avg)
         else:
-            return '...'
+            return ('...', 0)

@@ -2,13 +2,14 @@
 from threading import current_thread
 from shutil import disk_usage
 import sys
-
 # Third-party imports
 from PyQt5 import QtCore
 from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox
 
 # Local imports
 from .recreate_file import initialize_job, SourceFile
+
+window = None
 
 class FinishedDialog(QMessageBox):
     def __init__(self, success, path):
@@ -27,8 +28,51 @@ class ChooseSourceFileDialog(QFileDialog):
         super(ChooseSourceFileDialog, self).__init__()
         self.setWindowTitle("Choose source file")
 
+class Inspection(QtCore.QObject):
+    def __init__(self, id_str, name, sector_limit, prefix):
+        super().__init__()
+        self.id_str = id_str
+        self.name = name
+        self.progress_bar = QProgressBar()
+        self.sector_limit = sector_limit
+        self.label = QLabel(prefix)
+    
+    @QtCore.pyqtSlot(dict)
+    def update(self, info):
+        #self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
+        #for inspection in self.inspections:
+        """ if self.process.finished:
+            self.progress_bar.setParent(None)
+            self.label.setParent(None)
+            #self.inspections.remove(inspection)
+            del self
+            return """
+        self.progress_bar.setValue(100 * info['sector_count'] / self.sector_limit)            
+        if int(info['performance'][1]) > 0:    
+            self.label.setText(self.name + ': ' + str(info['sector_count']) + '/' + str(self.sector_limit) \
+                                + '\n' + info['performance'][0] \
+                                + '\naverage read = ' + '{:.2f}'.format(info['performance'][1]) + ' s' \
+                                + '\n' + '{:.4f}'.format(100 * info['success_count'] / info['sector_count']) + "% success")
+        else:
+            self.label.setText(self.name + ': ' + str(info['sector_count']) + '/' + str(self.sector_limit) \
+                                + '\n...\n...\n...')
+        """ if not self.inspections:
+            while executor._work_queue.qsize() > 0:
+                self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
+                sleep(0.5)
+            self.label.setParent(None)
+            break   """    
+
+    def finish(self):
+        self.label.setParent(None)
+        del window.inspections[self.id_str]
+
 class MainWindow(QWidget):
     def __init__(self, selected_vol):
+
+        global window
+        window = self
+
         super().__init__()
         self.setWindowTitle("ntfs-toolbox")
 
@@ -49,10 +93,10 @@ class MainWindow(QWidget):
 
         self.start_at = QLineEdit()
         self.start_at.setText('0')
-        #self.start_at.setText('0x9b4d70800')
+        self.start_at.setText('0x9b4d70800')
         #self.start_at.setText('0x404A8A99000')
         #self.start_at.setText('0x404c91a1800')
-        self.start_at.setText('0x4191FFA4800')
+        #self.start_at.setText('0x4191FFA4800')
         #self.start_at.setText('0xaea3d9fe000')
         start_at_hbox = QHBoxLayout()
         start_at_label = QLabel("Start at address (search forward): ")
@@ -72,10 +116,10 @@ class MainWindow(QWidget):
 
         self.time_remaining = QLabel()
 
-        self.express_mode = QCheckBox("Express mode (only disable for small volumes): ")
+        self.express_mode = QCheckBox("Express mode (only disable for small volumes)")
         self.express_mode.setChecked(True)
 
-        self.do_logging = QCheckBox("Log (./ntfs-toolbox/...): ")
+        self.do_logging = QCheckBox("Log (./ntfs-toolbox/...)")
         self.do_logging.setChecked(True)
 
         self.current_addr = QPushButton('Display current address')
@@ -99,10 +143,11 @@ class MainWindow(QWidget):
         self.time_remaining.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         grid.addWidget(self.time_remaining, 8, 2)
 
+        self.inspections = {}
 
         self.inspections_box = QGroupBox("Close inspections")
-        self.inspections = QVBoxLayout()
-        self.inspections_box.setLayout(self.inspections)
+        self.inspections_vbox = QVBoxLayout()
+        self.inspections_box.setLayout(self.inspections_vbox)
         grid.addWidget(self.inspections_box, 5, 0, 1, 3)
         
         grid.addLayout(successes_hbox, 3, 0)
@@ -127,75 +172,43 @@ class MainWindow(QWidget):
                 sys.exit()
             else:
                 event.ignore()
+                     
+    def initialize_inspection_gui(self, inspection):
+        label_prefix = "Close inspection at " + hex(inspection.addr)
+        label = QLabel(label_prefix)
+        time_estimate = QLabel("Calculating time remaining...")
 
-    class inspection_gui:
-        def __init__(self, inspection, window):
-            self.forward = inspection.forward
-            self.backward = inspection.backward
-            self.label_prefix = "Close inspection at " + hex(inspection.addr)
-            self.label = QLabel(self.label_prefix)
-            self.time_estimate = QLabel("Calculating time remaining...")
-            
-            self.inspections = {
-                "forward": {
-                    "process":self.forward,
-                    "bar":QProgressBar(),
-                    "label":QLabel(self.label_prefix)
-                },
-                "backward": {
-                    "process":self.backward,
-                    "bar":QProgressBar(),
-                    "label":QLabel(self.label_prefix)
-                }
-            }
-            
-            bars = QHBoxLayout()
+        forward_gui = Inspection("fwd" + hex(inspection.addr), "forward", inspection.forward.sector_limit, label_prefix)
+        backward_gui = Inspection("bkwd" + hex(inspection.addr), "backward", inspection.backward.sector_limit, label_prefix)
+        
+        bars = QHBoxLayout()
 
-            for key in self.inspections:
-                box = QVBoxLayout()
-                self.inspections[key]['bar'].setTextVisible(False)
-                box.addWidget(self.inspections[key]['bar'])
-                box.addWidget(self.inspections[key]['label'])
-                bars.addLayout(box)
+        # add forward to layout
+        box = QVBoxLayout()
+        forward_gui.progress_bar.setTextVisible(False)
+        box.addWidget(forward_gui.progress_bar)
+        box.addWidget(forward_gui.label)
+        bars.addLayout(box)
 
-            window.inspections.addWidget(self.label)
-            window.inspections.addLayout(bars)
-            window.inspections_box.setLayout(window.inspections)
-            
-            self.forward.inspection_progress_signal.connect(lambda: self.inspection_gui_update('forward'))
-            self.backward.inspection_progress_signal.connect(lambda: self.inspection_gui_update('backward'))
+        # add backward to layout
+        box = QVBoxLayout()
+        backward_gui.progress_bar.setTextVisible(False)
+        box.addWidget(backward_gui.progress_bar)
+        box.addWidget(backward_gui.label)
+        bars.addLayout(box)
 
-            #executor.submit(self.inspection_gui_update)
-            return
+        window.inspections_vbox.addWidget(label)
+        window.inspections_vbox.addLayout(bars)
+        window.inspections_box.setLayout(window.inspections_vbox)
 
-        def inspection_gui_update(self, which):
-            #self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-            
-            #for inspection in self.inspections:
-            inspection = self.inspections[which]
-            if not inspection['process'].finished:
-                inspection['bar'].setValue(100 * inspection['process'].sector_count / inspection['process'].sector_limit)            
-                if inspection['process'].perf.avg > 0:    
-                    inspection['label'].setText(which + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
-                                        + '\n' + inspection['process'].perf.get_remaining_estimate() \
-                                        + '\naverage read = ' + '{:.2f}'.format(inspection['process'].perf.avg) + ' s' \
-                                        + '\n' + '{:.4f}'.format(100 * inspection['process'].success_count / inspection['process'].sector_count) + "% success")
-                else:
-                    inspection['label'].setText(which + ': ' + str(inspection['process'].sector_count) + '/' + str(inspection['process'].sector_limit) \
-                                        + '\n...\n...\n...')
-            else:
-                inspection['bar'].setParent(None)
-                inspection['label'].setParent(None)
-                #self.inspections.remove(inspection)
-                del inspection
-            
-            """ if not self.inspections:
-                while executor._work_queue.qsize() > 0:
-                    self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-                    sleep(0.5)
-                self.label.setParent(None)
-                break   """              
-                
+        self.inspections[forward_gui.id_str] = forward_gui
+        self.inspections[backward_gui.id_str] = backward_gui
+
+        inspection.forward.progress_signal.connect(forward_gui.update)
+        inspection.backward.progress_signal.connect(backward_gui.update)
+
+        inspection.forward.finished_signal.connect(forward_gui.finish)
+        inspection.backward.finished_signal.connect(backward_gui.finish)
 
     def invalid_address(self, invalid_input, selected_vol):
         msg = QMessageBox()
@@ -246,7 +259,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
         self.job.success_signal.connect(self.visualize_file_progress)
-        self.job.new_inspection_signal.connect(lambda inspection: self.inspection_gui(inspection, self))
+        self.job.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.finished_signal.connect(self.finished)
         self.job.skim_progress_signal.connect(self.skim_gui_update)
         self.job.start.emit([start_at, init_avg])               

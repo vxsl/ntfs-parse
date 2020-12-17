@@ -19,12 +19,13 @@ def check_sector(inp, addr, close_reader=None):
         job.file.address_table[i].append(actual_address)
         job.file.remaining_sectors[i] = None
         if len(job.file.address_table[i]) == 1:
+            pass
             job.success_signal.emit(i)
         if close_reader:
             close_reader.success_count += 1
             close_reader.consecutive_successes += 1
         elif job.primary_reader.express and not job.primary_reader.inspection_in_progress(addr):
-            job.begin_close_inspection(actual_address)
+            executor.submit(job.begin_close_inspection, actual_address)
         if not any(job.file.remaining_sectors) and not job.finished:
             job.finish()
         return
@@ -42,10 +43,12 @@ class DiskReader(QtCore.QObject):
 
 class CloseReader(DiskReader):
 
-    inspection_progress_signal = QtCore.pyqtSignal()
+    progress_signal = QtCore.pyqtSignal(dict)
+    finished_signal = QtCore.pyqtSignal()
 
-    def __init__(self):
+    def __init__(self, start_at):
         super().__init__(job.disk_path)
+        self.start_at = start_at
         self.sector_limit = job.total_sectors #???
         self.sector_count = 0
         self.success_count = 0
@@ -54,11 +57,11 @@ class CloseReader(DiskReader):
         self.finished = False
         job.perf.children.append(self.perf)
 
-    def read(self, addr):
-        current_thread().name = ("Close reader at " + hex(addr))
-        self.fd.seek(addr)
+    def read(self):
+        current_thread().name = ("Close reader at " + hex(self.start_at))
+        self.fd.seek(self.start_at)
         self.perf.start()
-        for _ in range(self.sector_limit):
+        for sector in range(self.sector_limit):
             data = self.fd.read(SECTOR_SIZE)
             if job.finished or not data or self.should_quit():
                 break
@@ -66,12 +69,18 @@ class CloseReader(DiskReader):
                 executor.submit(check_sector, data, self.fd.tell(), self)
             self.sector_count += 1
             executor.submit(self.perf.increment)
-            self.inspection_progress_signal.emit()
+            #self.progress_signal.emit()
+            if sector % 10 == 0:
+                self.progress_signal.emit({
+                    'sector_count':self.sector_count,
+                    'success_count':self.success_count,
+                    'performance':self.perf.get_remaining_estimate()
+                })
         self.finished = True
         return
     
     def should_quit(self):
-        if self.sector_count > 0.02 * self.sector_limit \
+        if self.sector_count > 0.15 * self.sector_limit \
         and self.success_count < 0.25 * self.sector_count \
         and self.consecutive_successes == 0:
             return True
@@ -80,23 +89,29 @@ class CloseReader(DiskReader):
             return False
 
 class ForwardCloseReader(CloseReader):
-    def read(self, addr):
-        super().read(addr)
+    def read(self):
+        super().read()
         with lock:
             job.perf.children.remove(self.perf)
-            job.primary_reader.inspections.remove((hex(addr), self))
-        current_thread().name = ("Control returned from a forward inspection at " + hex(addr))
+            job.primary_reader.inspections.remove((hex(self.start_at), self))
+        self.finished_signal.emit()
+        current_thread().name = ("Control returned from a forward inspection at " + hex(self.start_at))
         job.resume_primary_reader_signal.emit()
         return
 
 
 class BackwardCloseReader(CloseReader):
-    def read(self, addr):
-        super().read(addr - (self.sector_limit * SECTOR_SIZE))
+    def __init__(self, start_at):
+        super(BackwardCloseReader, self).__init__(start_at)
+        self.start_at -= (self.sector_limit * SECTOR_SIZE)
+
+    def read(self):
+        super().read()
         with lock:
             job.perf.children.remove(self.perf)
-            job.primary_reader.inspections.remove((hex(addr), self))
-        current_thread().name = ("Control returned from a backward inspection at " + hex(addr))
+            job.primary_reader.inspections.remove((hex(self.start_at), self))
+        self.finished_signal.emit()
+        current_thread().name = ("Control returned from a backward inspection at " + hex(self.start_at))
         job.resume_primary_reader_signal.emit()
         return
 
@@ -159,11 +174,10 @@ class Job(QtCore.QObject):
 
     do_test_run = QtCore.pyqtSignal()
     start = QtCore.pyqtSignal(list) 
-    
+    new_inspection_signal = QtCore.pyqtSignal(object)
     # PyQt event signaller
     success_signal = QtCore.pyqtSignal(int)
     finished_signal = QtCore.pyqtSignal(bool)
-    new_inspection_signal = QtCore.pyqtSignal(object)
     #ready_signal = QtCore.pyqtSignal(bool)
     skim_progress_signal = QtCore.pyqtSignal()
     loading_progress_signal = QtCore.pyqtSignal(float)
@@ -206,10 +220,6 @@ class Job(QtCore.QObject):
         for i in range(len(self.rebuilt_file)):
             self.log.write("Sector " + i + ":\t\t" + self.rebuilt_file[i][0])
 
-    def begin_close_inspection(self, addr):
-        inspection = self.close_inspection(addr)
-        self.new_inspection_signal.emit(inspection)
-
     @QtCore.pyqtSlot()
     def test_run(self):
         def fake_function(inp):
@@ -241,15 +251,32 @@ class Job(QtCore.QObject):
             self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, init_avg=init_avg)
         self.primary_reader.read(start_at)
 
-    class close_inspection:
+    class CloseInspection(QtCore.QObject):
+
         def __init__(self, addr):
             self.addr = addr
-            self.forward = ForwardCloseReader()
-            self.backward = BackwardCloseReader()
+            self.forward = ForwardCloseReader(addr)
+            self.backward = BackwardCloseReader(addr)
             job.primary_reader.inspections.append((hex(self.addr), self.forward))
             job.primary_reader.inspections.append((hex(self.addr), self.backward))
-            executor.submit(self.forward.read, self.addr)
-            executor.submit(self.backward.read, self.addr)
+            executor.submit(self.forward.read)
+            executor.submit(self.backward.read)            
+        
+        """ def start(self):
+            fwd = self.forward
+            bkwd = self.backward
+            while not fwd.finished and not bkwd.finished:
+                if not fwd.finished:
+                    fwd.progress_signal.emit()
+                if not bkwd.finished:
+                    bkwd.progress_signal.emit()
+                time.sleep(2)
+            print("Inspections finished") """
+
+    def begin_close_inspection(self, addr):
+        inspection = self.CloseInspection(addr)
+        self.new_inspection_signal.emit(inspection)
+        #inspection.start()
 
     def finish(self):
         with lock:
