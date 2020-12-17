@@ -19,7 +19,6 @@ def check_sector(inp, addr, close_reader=None):
         job.file.address_table[i].append(actual_address)
         job.file.remaining_sectors[i] = None
         if len(job.file.address_table[i]) == 1:
-            pass
             job.success_signal.emit(i)
         else:
             print('length different')
@@ -28,7 +27,9 @@ def check_sector(inp, addr, close_reader=None):
             close_reader.consecutive_successes += 1
         elif job.primary_reader.express and not job.primary_reader.inspection_in_progress(addr):
             executor.submit(job.begin_close_inspection, actual_address)
-        if not any(job.file.remaining_sectors) and not job.finished:
+        if (not any(job.file.remaining_sectors) \
+            or all(sector in MEANINGLESS_SECTORS or sector is None for sector in job.file.remaining_sectors)) \
+            and not job.finished:
             job.finish()
         return
     except ValueError:  # inp did not exist in job.file.remaining_sectors
@@ -289,6 +290,12 @@ class Job(QtCore.QObject):
     def finish(self):
         with lock:
             self.finished = True
+
+            for sector in filter(None, job.file.remaining_sectors):
+                if sector in MEANINGLESS_SECTORS:
+                    i = job.file.remaining_sectors.index(sector)
+                    job.file.address_table[i] = sector
+
             fd = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
             out_file = open(self.rebuilt_file_path, 'wb')
             """ for addr, sector in self.rebuilt_file:
