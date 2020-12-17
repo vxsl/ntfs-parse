@@ -29,24 +29,18 @@ class ChooseSourceFileDialog(QFileDialog):
         self.setWindowTitle("Choose source file")
 
 class Inspection(QtCore.QObject):
+
     def __init__(self, id_str, name, sector_limit, prefix):
         super().__init__()
         self.id_str = id_str
         self.name = name
         self.progress_bar = QProgressBar()
         self.sector_limit = sector_limit
-        self.label = QLabel(prefix)
+        self.label = QLabel(prefix)        
+        #self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
     
     @QtCore.pyqtSlot(dict)
     def update(self, info):
-        #self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-        #for inspection in self.inspections:
-        """ if self.process.finished:
-            self.progress_bar.setParent(None)
-            self.label.setParent(None)
-            #self.inspections.remove(inspection)
-            del self
-            return """
         self.progress_bar.setValue(100 * info['sector_count'] / self.sector_limit)            
         if int(info['performance'][1]) > 0:    
             self.label.setText(self.name + ': ' + str(info['sector_count']) + '/' + str(self.sector_limit) \
@@ -64,6 +58,7 @@ class Inspection(QtCore.QObject):
             break   """    
 
     def finish(self):
+        self.progress_bar.setParent(None)
         self.label.setParent(None)
         del window.inspections[self.id_str]
 
@@ -143,8 +138,10 @@ class MainWindow(QWidget):
         self.time_remaining.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         grid.addWidget(self.time_remaining, 8, 2)
 
+        self.executor_queue = QLabel()
+        grid.addWidget(self.executor_queue, 0, 3)
         self.inspections = {}
-
+        
         self.inspections_box = QGroupBox("Close inspections")
         self.inspections_vbox = QVBoxLayout()
         self.inspections_box.setLayout(self.inspections_vbox)
@@ -204,6 +201,8 @@ class MainWindow(QWidget):
         self.inspections[forward_gui.id_str] = forward_gui
         self.inspections[backward_gui.id_str] = backward_gui
 
+        """ inspection.forward.progress_signal.connect(lambda info: forward_gui.update(info) if not forward_gui.updating else None)
+        inspection.backward.progress_signal.connect(lambda info: backward_gui.update(info) if not backward_gui.updating else None) """
         inspection.forward.progress_signal.connect(forward_gui.update)
         inspection.backward.progress_signal.connect(backward_gui.update)
 
@@ -262,7 +261,13 @@ class MainWindow(QWidget):
         self.job.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.finished_signal.connect(self.finished)
         self.job.skim_progress_signal.connect(self.skim_gui_update)
+
+        self.job.executor_queue_signal.connect(self.queue_update)
+
         self.job.start.emit([start_at, init_avg])               
+
+    def queue_update(self, num):
+        self.executor_queue.setText(str(num) + " in the queue")
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()

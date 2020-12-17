@@ -21,6 +21,8 @@ def check_sector(inp, addr, close_reader=None):
         if len(job.file.address_table[i]) == 1:
             pass
             job.success_signal.emit(i)
+        else:
+            print('length different')
         if close_reader:
             close_reader.success_count += 1
             close_reader.consecutive_successes += 1
@@ -70,16 +72,21 @@ class CloseReader(DiskReader):
             self.sector_count += 1
             executor.submit(self.perf.increment)
             #self.progress_signal.emit()
-            if sector % 10 == 0:
-                self.progress_signal.emit({
-                    'sector_count':self.sector_count,
-                    'success_count':self.success_count,
-                    'performance':self.perf.get_remaining_estimate()
-                })
+            #if sector % 10 == 0:
+            executor.submit(self.emit_progress)
         self.finished = True
         return
+
+    def emit_progress(self):
+        self.progress_signal.emit({
+            'sector_count':self.sector_count,
+            'success_count':self.success_count,
+            'performance':self.perf.get_remaining_estimate()
+        })
+        job.executor_queue_signal.emit(executor._work_queue.qsize())
     
     def should_quit(self):
+        return False
         if self.sector_count > 0.15 * self.sector_limit \
         and self.success_count < 0.25 * self.sector_count \
         and self.consecutive_successes == 0:
@@ -182,6 +189,7 @@ class Job(QtCore.QObject):
     skim_progress_signal = QtCore.pyqtSignal()
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(float)
+    executor_queue_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, vol, file, do_logging, express):
         super().__init__()
