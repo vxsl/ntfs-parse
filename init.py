@@ -2,7 +2,7 @@ import string
 import os
 from PyQt5.QtWidgets import QDialog, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QVBoxLayout, QApplication
 from apps.raw_gz import raw_gz
-from apps.recreate_file import gui
+from recreate_file import gui
 
 class StartDialog(QDialog):
     def __init__(self):
