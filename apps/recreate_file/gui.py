@@ -2,10 +2,12 @@
 from threading import current_thread
 from shutil import disk_usage
 import sys
-from operator import attrgetter, itemgetter
 # Third-party imports
 from PyQt5 import QtCore
-from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QCheckBox, QWidget, QProgressBar, QMessageBox, QVBoxLayout, QGroupBox
+from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
+                            QLabel, QLineEdit, QPushButton, QCheckBox, \
+                            QWidget, QProgressBar, QMessageBox, \
+                            QVBoxLayout, QGroupBox
 
 # Local imports
 from .recreate_file import initialize_job, SourceFile
@@ -35,36 +37,34 @@ class InspectionModel(QtCore.QObject):
         super().__init__()
         self.id_str = id_str
         self.progress_bar = QProgressBar()
+        self.label = QLabel(prefix)
         self.sector_limit = sector_limit
-        self.label = QLabel(prefix)  
-        self.avg = 0      
+        self.avg = 0
         self.estimate_fn = estimate_fn
-        #self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-    
-    @QtCore.pyqtSlot(dict)
+
+    @QtCore.pyqtSlot(tuple)
     def update(self, info):
-        self.avg = info['average']
-        self.progress_bar.setValue(100 * info['sector_count'] / self.sector_limit)            
-        if int(self.avg) > 0:    
-            self.label.setText(str(info['sector_count']) + '/' + str(self.sector_limit) \
-                                #+ '\n' + info['performance'][0] \
-                                # TODO only update average read when there is a new calculation
-                                #+ '\naverage read = ' + '{:.2f}'.format(self.avg) + ' s' \
-                                + '\n' + '{:.4f}'.format(100 * info['success_count'] / info['sector_count']) + "% success")
+        sector_count = info[0]
+        success_count = info[1]
+        self.progress_bar.setValue(100 * sector_count / self.sector_limit)
+        if self.avg > 0:
+            self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
+                                + '\n' + '{:.4f}'.format(100 * success_count / sector_count) \
+                                + "% success")
         else:
-            self.label.setText(str(info['sector_count']) + '/' + str(self.sector_limit) \
-                                + '\n...\n...\n...')
+            self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
+                                + '\n...\n...')
         """ if not self.inspections:
             while executor._work_queue.qsize() > 0:
                 self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
                 sleep(0.5)
             self.label.setParent(None)
-            break   """  
+            break   """
 
     def finish(self):
         self.progress_bar.setParent(None)
         self.label.setParent(None)
-        del window.inspections[self.id_str]
+        del window.current_inspections[self.id_str]
 
 class MainWindow(QWidget):
     def __init__(self, selected_vol):
@@ -107,12 +107,9 @@ class MainWindow(QWidget):
         successes_hbox = QHBoxLayout()
         successes_hbox.addWidget(self.successes)
 
-        self.current_inspection_averages = {}
-        self.current_longest_estimate = None
-
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
-        self.progress_percentage = QLabel()
+        self.skim_percentage = QLabel()
         self.sector_avg = QLabel()
 
         self.time_remaining = QLabel()
@@ -124,7 +121,8 @@ class MainWindow(QWidget):
         self.do_logging.setChecked(True)
 
         self.current_addr = QPushButton('Display current address')
-        self.current_addr.clicked.connect(lambda: self.current_addr.setText(hex(self.job.primary_reader.fd.tell())))
+        self.current_addr.clicked.connect(lambda: \
+            self.current_addr.setText(hex(self.job.primary_reader.fobj.tell())))
 
         self.start = QPushButton('Start')
         self.start.clicked.connect(self.request_test_run)
@@ -142,8 +140,8 @@ class MainWindow(QWidget):
         grid.addWidget(self.express_mode, 7, 0)
         grid.addWidget(self.do_logging, 8, 0)
 
-        self.progress_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.progress_percentage, 6, 2)
+        self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        grid.addWidget(self.skim_percentage, 6, 2)
 
         self.sector_avg.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         grid.addWidget(self.sector_avg, 9, 2)
@@ -152,14 +150,19 @@ class MainWindow(QWidget):
         grid.addWidget(self.time_remaining, 8, 2)
 
         self.executor_queue = QLabel()
-        grid.addWidget(self.executor_queue, 0, 3)
-        self.inspections = {}
-        
+        self.executor_queue.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        grid.addWidget(self.executor_queue, 0, 2)
+
+        self.current_inspections = {}
+        self.current_inspection_averages = {}
+        self.current_slowest_inspection = None
+        self.inspection_sample_size = None
+
         self.inspections_box = QGroupBox("Close inspections")
         self.inspections_vbox = QVBoxLayout()
         self.inspections_box.setLayout(self.inspections_vbox)
         grid.addWidget(self.inspections_box, 5, 0, 1, 3)
-        
+
         grid.addLayout(successes_hbox, 3, 0)
         grid.addWidget(self.current_addr, 7, 2)
         grid.addWidget(self.skim_progress_bar, 4, 0, 1, 3)
@@ -168,15 +171,17 @@ class MainWindow(QWidget):
         grid.addLayout(start_at_hbox, 10, 0)
 
         self.setLayout(grid)
-        
+
         current_thread().name = "MAIN GUI THREAD"
 
     def render_main_clock(self):
         self.time = self.time.addSecs(-1)
-        the_time = self.time.toString("h:m:ss")
-        self
-        if self.current_longest_estimate:
-            self.time_remaining.setText(the_time + " remaining in close inspection")
+        the_time = self.time.toString("h:mm:ss")
+        if self.current_slowest_inspection:
+            self.time_remaining.setText("Average time to parse " \
+                + str(len(self.current_inspections) * self.inspection_sample_size) \
+                + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
+                + " s" + the_time + " remaining in close inspection.\n")
         else:
             self.time_remaining.setText(the_time + " remaining in skim")
 
@@ -187,36 +192,35 @@ class MainWindow(QWidget):
 
             if reply == QMessageBox.Yes:
                 event.accept()
-                print('Window closed')                
+                print('Window closed')
                 sys.exit()
             else:
                 event.ignore()
 
     def new_average(self, data):
-        self.current_inspection_averages[data[1]] = data[0]
-        if len(self.current_inspection_averages) == len(self.inspections):
-            slowest = max(self.inspections, key=lambda x: self.inspections[x].avg)
-            #self.time_remaining.setText(self.inspections[slowest].estimate_fn() + " in close inspection")
-            #self.current_longest_estimate = self.inspections[slowest].estimate_fn
-            #split = self.inspections[slowest].estimate_fn.split(":")
+        id_str = data[1]
+        avg = data[0]
+
+        self.current_inspections[id_str].avg = avg
+        self.current_inspection_averages[id_str] = avg
+        if len(self.current_inspection_averages) == len(self.current_inspections):
+            slowest = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
+            self.current_slowest_inspection = self.current_inspections[slowest]
             self.time.setHMS(0,0,0)
-            self.time = self.time.addSecs(self.inspections[slowest].estimate_fn())
+            self.time = self.time.addSecs(self.current_inspections[slowest].estimate_fn())
             del self.current_inspection_averages
             self.current_inspection_averages = {}
-                   
+
     def initialize_inspection_gui(self, inspection):
         label_prefix = "Close inspection at " + hex(inspection.addr)
         label = QLabel(label_prefix)
-        time_estimate = QLabel("Calculating time remaining...")
 
         inspection.forward.perf.new_average_signal.connect(self.new_average)
         inspection.backward.perf.new_average_signal.connect(self.new_average)
 
-        """ forward_gui = InspectionModel(inspection.forward.id_str, inspection.forward.sector_limit, label_prefix, lambda: inspection.forward.perf.get_remaining_estimate())
-        backward_gui = InspectionModel(inspection.backward.id_str, inspection.backward.sector_limit, label_prefix, lambda: inspection.backward.perf.get_remaining_estimate()) """
         forward_gui = InspectionModel(inspection.forward.id_str, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
         backward_gui = InspectionModel(inspection.backward.id_str, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
-        
+
         bars = QHBoxLayout()
 
         # add forward to layout
@@ -233,15 +237,13 @@ class MainWindow(QWidget):
         box.addWidget(backward_gui.label)
         bars.addLayout(box)
 
-        window.inspections_vbox.addWidget(label)
-        window.inspections_vbox.addLayout(bars)
-        window.inspections_box.setLayout(window.inspections_vbox)
+        self.inspections_vbox.addWidget(label)
+        self.inspections_vbox.addLayout(bars)
+        self.inspections_box.setLayout(self.inspections_vbox)
 
-        self.inspections[forward_gui.id_str] = forward_gui
-        self.inspections[backward_gui.id_str] = backward_gui
+        self.current_inspections[forward_gui.id_str] = forward_gui
+        self.current_inspections[backward_gui.id_str] = backward_gui
 
-        """ inspection.forward.progress_signal.connect(lambda info: forward_gui.update(info) if not forward_gui.updating else None)
-        inspection.backward.progress_signal.connect(lambda info: backward_gui.update(info) if not backward_gui.updating else None) """
         inspection.forward.progress_signal.connect(forward_gui.update)
         inspection.backward.progress_signal.connect(backward_gui.update)
 
@@ -255,7 +257,7 @@ class MainWindow(QWidget):
         msg.setInformativeText('Please enter a value between 0x0 and ' \
             + str(hex(disk_usage(selected_vol + ':\\').total).upper() + '.'))
         msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec()       
+        msg.exec()
 
     def validate_hex(self, inp):
         try:
@@ -264,13 +266,13 @@ class MainWindow(QWidget):
                 self.start.setDisabled(True)
                 self.start_at.setDisabled(True)
                 self.express_mode.setDisabled(True)
-                self.do_logging.setDisabled(True)                
+                self.do_logging.setDisabled(True)
                 return int(inp, 16)
-            else:  
+            else:
                 return None
         except ValueError:
             return None
-            
+
     def request_test_run(self):
 
         user_input = self.start_at.text()
@@ -278,22 +280,24 @@ class MainWindow(QWidget):
         if validated_start_address is None:
             self.invalid_address(user_input, self.selected_vol)
             return
-        
+
         self.skim_progress_bar.setTextVisible(True)
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
-        
+
         self.job_thread = QtCore.QThread()
-        self.job_thread.start()        
+        self.job_thread.start()
         self.job = initialize_job(True, self.selected_vol, self.file, self.express_mode.isChecked())
         self.job.moveToThread(self.job_thread)
 
         self.job.do_test_run.emit()
         self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
-        self.job.loading_complete_signal.connect(lambda init_avg: self.go(init_avg, validated_start_address))
+        self.job.loading_complete_signal.connect(lambda data: \
+            self.go(data, validated_start_address))
 
-    def go(self, init_avg, start_at):
-        
+    def go(self, data, start_at):
+        init_avg = data[0]
+        self.inspection_sample_size = data[1]
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
         self.job.success_signal.connect(self.visualize_file_progress)
@@ -301,14 +305,11 @@ class MainWindow(QWidget):
         self.job.finished_signal.connect(self.finished)
         self.job.skim_progress_signal.connect(self.skim_gui_update)
 
-        self.job.executor_queue_signal.connect(self.queue_update)
+        self.job.executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
 
-        self.job.start.emit([start_at, init_avg])    
-        
-        self.main_clock.start(1000)           
+        self.job.start.emit([start_at, init_avg])
 
-    def queue_update(self, num):
-        self.executor_queue.setText(str(num) + " sectors in the queue")
+        self.main_clock.start(1000)
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
@@ -323,13 +324,11 @@ class MainWindow(QWidget):
         + " remaining sectors..."))
 
     def skim_gui_update(self):
-        #print('gui update')
         progress =  self.job.perf.sectors_read
         percent = 100 * progress / self.job.perf.total_sectors_to_read
-        self.progress_percentage.setText("{:.8f}".format(percent) + "%")
+        self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
         self.sector_avg.setText("Average time to traverse " \
         + str(self.job.perf.sample_size * self.job.perf.jump_size) \
         + " sectors (" + str(self.job.perf.sample_size * self.job.perf.jump_size * 512 / 1000000) \
         + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
-        #self.time_remaining.setText(self.job.perf.get_remaining_estimate())
