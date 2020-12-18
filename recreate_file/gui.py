@@ -54,12 +54,6 @@ class InspectionModel(QtCore.QObject):
         else:
             self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
                                 + '\n...\n...')
-        """ if not self.inspections:
-            while executor._work_queue.qsize() > 0:
-                self.label.setText(self.label_prefix + ": " + str(executor._work_queue.qsize()) + " sectors in the queue")
-                sleep(0.5)
-            self.label.setParent(None)
-            break   """
 
     def finish(self):
         self.progress_bar.setParent(None)
@@ -68,7 +62,7 @@ class InspectionModel(QtCore.QObject):
 
 class MainWindow(QWidget):
     def __init__(self, selected_vol):
-
+        # TODO remove useless attribute assignments
         global window
         window = self
 
@@ -82,14 +76,16 @@ class MainWindow(QWidget):
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
 
+        self.file_info_box = QGroupBox("Source file")
         file_info = QGridLayout()
-        file_info.addWidget(QLabel('Source file name:'), 0, 0)
+        file_info.addWidget(QLabel('Name:'), 0, 0)
         file_info.addWidget(QLabel(self.file.name), 0, 1)
-        file_info.addWidget(QLabel('Source file location:'), 1, 0)
+        file_info.addWidget(QLabel('Location:'), 1, 0)
         file_info.addWidget(QLabel(self.file.dir), 1, 1)
         file_info.addWidget(QLabel('Size:'), 2, 0)
         file_info.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
-
+        self.file_info_box.setLayout(file_info)
+        
         self.start_at = QLineEdit()
         self.start_at.setText('0')
         self.start_at.setText('0x9b4d70800')
@@ -103,9 +99,8 @@ class MainWindow(QWidget):
         start_at_hbox.addWidget(self.start_at)
 
         self.successes = QLabel()
+        self.successes.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         self.successes.setText("0/" + (str(len(self.file.remaining_sectors))))
-        successes_hbox = QHBoxLayout()
-        successes_hbox.addWidget(self.successes)
 
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
@@ -135,7 +130,7 @@ class MainWindow(QWidget):
         #self.main_clock.timeout.connect(lambda: self.main_clock.setText)
 
         grid = QGridLayout()
-        grid.addLayout(file_info, 0, 0)
+        grid.addWidget(self.file_info_box, 0, 0)
 
         grid.addWidget(self.express_mode, 7, 0)
         grid.addWidget(self.do_logging, 8, 0)
@@ -151,7 +146,7 @@ class MainWindow(QWidget):
 
         self.executor_queue = QLabel()
         self.executor_queue.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.executor_queue, 0, 2)
+        grid.addWidget(self.executor_queue, 7, 2)
 
         self.current_inspections = {}
         self.current_inspection_averages = {}
@@ -163,7 +158,7 @@ class MainWindow(QWidget):
         self.inspections_box.setLayout(self.inspections_vbox)
         grid.addWidget(self.inspections_box, 5, 0, 1, 3)
 
-        grid.addLayout(successes_hbox, 3, 0)
+        grid.addWidget(self.successes, 0, 2)
         grid.addWidget(self.current_addr, 7, 2)
         grid.addWidget(self.skim_progress_bar, 4, 0, 1, 3)
 
@@ -181,7 +176,7 @@ class MainWindow(QWidget):
             self.time_remaining.setText("Average time to parse " \
                 + str(len(self.current_inspections) * self.inspection_sample_size) \
                 + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
-                + " s" + the_time + " remaining in close inspection.\n")
+                + " s\n" + the_time + " remaining to finish all close inspections.\n")
         else:
             self.time_remaining.setText(the_time + " remaining in skim")
 
@@ -320,7 +315,7 @@ class MainWindow(QWidget):
         self.successes.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
         + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
-        + "%\n\n Testing equality for " + str(self.job.total_sectors - self.job.done_sectors) \
+        + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
 
     def skim_gui_update(self):
@@ -328,7 +323,7 @@ class MainWindow(QWidget):
         percent = 100 * progress / self.job.perf.total_sectors_to_read
         self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
-        self.sector_avg.setText("Average time to traverse " \
+        self.sector_avg.setText("Average time to skim " \
         + str(self.job.perf.sample_size * self.job.perf.jump_size) \
         + " sectors (" + str(self.job.perf.sample_size * self.job.perf.jump_size * 512 / 1000000) \
         + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
