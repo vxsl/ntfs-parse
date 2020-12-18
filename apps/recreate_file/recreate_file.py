@@ -27,8 +27,7 @@ def check_sector(inp, addr, close_reader=None):
             close_reader.consecutive_successes += 1
         elif job.primary_reader.express and not job.primary_reader.inspection_in_progress(addr):
             executor.submit(job.begin_close_inspection, actual_address)
-        if (not any(job.file.remaining_sectors) \
-            or all(sector in MEANINGLESS_SECTORS or sector is None for sector in job.file.remaining_sectors)) \
+        if all(not _ or _ in MEANINGLESS_SECTORS for _ in job.file.remaining_sectors) \
             and not job.finished:
             job.finish()
         return
@@ -49,14 +48,20 @@ class CloseReader(DiskReader):
     progress_signal = QtCore.pyqtSignal(dict)
     finished_signal = QtCore.pyqtSignal()
 
-    def __init__(self, start_at):
+    def __init__(self, start_at, backward=False):
         super().__init__(job.disk_path)
+        
+        if backward:
+            self.id_str = "bkwd" + hex(start_at)
+        else:
+            self.id_str = "fwd" + hex(start_at)
+
         self.start_at = start_at
         self.sector_limit = job.total_sectors #???
         self.sector_count = 0
         self.success_count = 0
         self.consecutive_successes = 0
-        self.perf = InspectionPerformanceCalc(self.sector_limit)
+        self.perf = InspectionPerformanceCalc(self.sector_limit, self.id_str)
         self.finished = False
         job.perf.children.append(self.perf)
 
@@ -82,7 +87,7 @@ class CloseReader(DiskReader):
         self.progress_signal.emit({
             'sector_count':self.sector_count,
             'success_count':self.success_count,
-            'performance':self.perf.get_remaining_estimate()
+            'average':self.perf.avg
         })
         job.executor_queue_signal.emit(executor._work_queue.qsize())
     
@@ -110,7 +115,7 @@ class ForwardCloseReader(CloseReader):
 
 class BackwardCloseReader(CloseReader):
     def __init__(self, start_at):
-        super(BackwardCloseReader, self).__init__(start_at)
+        super(BackwardCloseReader, self).__init__(start_at, True)
         self.start_at -= (self.sector_limit * SECTOR_SIZE)
 
     def read(self):
@@ -263,6 +268,7 @@ class Job(QtCore.QObject):
     class CloseInspection(QtCore.QObject):
 
         def __init__(self, addr):
+            super().__init__()
             self.addr = addr
             self.forward = ForwardCloseReader(addr)
             self.backward = BackwardCloseReader(addr)

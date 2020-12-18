@@ -1,6 +1,7 @@
 from time import perf_counter
 from datetime import timedelta
 from math import ceil
+from PyQt5 import QtCore
 
 SECTOR_SIZE = None
 DEFAULT_SAMPLE_SIZE = 1000
@@ -74,9 +75,13 @@ class PerformanceCalculator():
             else:   
                 return "Calculating time remaining..."
 
-class InspectionPerformanceCalc():
+class InspectionPerformanceCalc(QtCore.QObject):
 
-    def __init__(self, total_sectors):
+    new_average_signal = QtCore.pyqtSignal(object)
+
+    def __init__(self, total_sectors, id_str):
+        super().__init__()
+        self.id_str = id_str
         self.avg = 0
         self.cur_start = None
         self.sectors_read = 0
@@ -94,7 +99,8 @@ class InspectionPerformanceCalc():
                 self.avg += (perf_counter() - self.cur_start)            
                 self.avg = (self.avg / 2)
             else:
-                self.avg += (perf_counter() - self.cur_start)            
+                self.avg += (perf_counter() - self.cur_start)    
+            self.new_average_signal.emit((self.avg, self.id_str))        
             self.start()
 
     def get_remaining_seconds(self):
@@ -103,6 +109,7 @@ class InspectionPerformanceCalc():
     def get_remaining_estimate(self):
         seconds = self.get_remaining_seconds()
         if seconds > 0:
-            return (str(timedelta(seconds=self.get_remaining_seconds())).split(".")[0] + " remaining", self.avg)
+            #return str(timedelta(seconds=self.get_remaining_seconds())).split(".")[0] + " remaining"
+            return timedelta(seconds=self.get_remaining_seconds()).seconds
         else:
-            return ('...', 0)
+            return '...'
