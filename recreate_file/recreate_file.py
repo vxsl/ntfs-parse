@@ -21,7 +21,7 @@ def check_sector(inp, addr, close_reader=None):
         if len(job.file.address_table[i]) == 1:
             job.success_signal.emit(i)
         else:
-            print('length different')
+            print('duplicate found') # TODO implement duplicate sector counter (how many are meaningless?)
         if close_reader:
             close_reader.success_count += 1
             close_reader.consecutive_successes += 1
@@ -30,7 +30,8 @@ def check_sector(inp, addr, close_reader=None):
         #if all(not _ or _ in MEANINGLESS_SECTORS for _ in job.file.remaining_sectors) \
         if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
             and not job.finished:
-            job.finish()
+            with lock:
+                job.finish()
         return
     except ValueError:  # inp did not exist in job.file.remaining_sectors
         if close_reader:
@@ -279,24 +280,25 @@ class Job(QtCore.QObject):
         #inspection.start()
 
     def finish(self):
-        with lock:
-            self.finished = True
 
-            for sector in filter(None, job.file.remaining_sectors):
-                if sector in MEANINGLESS_SECTORS:
-                    i = job.file.remaining_sectors.index(sector)
-                    job.file.address_table[i] = sector
+        self.finished = True
 
-            fd = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
-            out_file = open(self.rebuilt_file_path, 'wb')
-            """ for addr, sector in self.rebuilt_file:
-                out_file.write(sector) """
-            for addresses in job.file.address_table:
-                fd.seek(addresses[0])
-                out_file.write(fd.read(SECTOR_SIZE))
-                out_file.flush()
-            out_file.close()
-            self.finished_signal.emit(True)
+        for sector in filter(None, job.file.remaining_sectors):
+            if sector in MEANINGLESS_SECTORS:
+                i = job.file.remaining_sectors.index(sector)
+                job.file.address_table[i] = sector
+                job.file.remaining_sectors[i] = None
+
+        fd = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
+        out_file = open(self.rebuilt_file_path, 'wb')
+        """ for addr, sector in self.rebuilt_file:
+            out_file.write(sector) """
+        for addresses in job.file.address_table:
+            fd.seek(addresses[0])
+            out_file.write(fd.read(SECTOR_SIZE))
+            out_file.flush()
+        out_file.close()
+        self.finished_signal.emit(True)
 
 class SourceFile():
     def __init__(self, path):
