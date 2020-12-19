@@ -26,10 +26,6 @@ class FinishedDialog(QMessageBox):
             #TODO not sure what to do here
         self.setStandardButtons(QMessageBox.Ok)
 
-class ChooseSourceFileDialog(QFileDialog):
-    def __init__(self):
-        super(ChooseSourceFileDialog, self).__init__()
-        self.setWindowTitle("Choose source file")
 
 class InspectionModel(QtCore.QObject):
 
@@ -61,17 +57,13 @@ class InspectionModel(QtCore.QObject):
         del window.current_inspections[self.id_str]
 
 class MainWindow(QWidget):
-    def __init__(self, selected_vol):
+    def __init__(self, selected_vol, path):
         # TODO remove useless attribute assignments
         global window
         window = self
 
         super().__init__()
-        self.setWindowTitle("ntfs-toolbox")
-
-        dlg = ChooseSourceFileDialog()
-        dlg.exec()
-        path = dlg.selectedFiles()[0]
+        self.setWindowTitle("recoverability")        
 
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
@@ -119,8 +111,8 @@ class MainWindow(QWidget):
         self.current_addr.clicked.connect(lambda: \
             self.current_addr.setText(hex(self.job.primary_reader.fobj.tell())))
 
-        self.start = QPushButton('Start')
-        self.start.clicked.connect(self.request_test_run)
+        self.start_button = QPushButton('Start')
+        self.start_button.clicked.connect(self.start)
 
         #self.main_clock = QtCore.QTimer(self)
         self.time_remaining = QLabel()
@@ -162,7 +154,7 @@ class MainWindow(QWidget):
         grid.addWidget(self.current_addr, 7, 2)
         grid.addWidget(self.skim_progress_bar, 4, 0, 1, 3)
 
-        grid.addWidget(self.start, 9, 0)
+        grid.addWidget(self.start_button, 9, 0)
         grid.addLayout(start_at_hbox, 10, 0)
 
         self.setLayout(grid)
@@ -257,8 +249,8 @@ class MainWindow(QWidget):
     def validate_hex(self, inp):
         try:
             if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
-                self.start.setText('...')
-                self.start.setDisabled(True)
+                self.start_button.setText('...')
+                self.start_button.setDisabled(True)
                 self.start_at.setDisabled(True)
                 self.express_mode.setDisabled(True)
                 self.do_logging.setDisabled(True)
@@ -268,7 +260,7 @@ class MainWindow(QWidget):
         except ValueError:
             return None
 
-    def request_test_run(self):
+    def start(self):
 
         user_input = self.start_at.text()
         validated_start_address = self.validate_hex(user_input)
@@ -280,30 +272,22 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.job_thread = QtCore.QThread()
-        self.job_thread.start()
         self.job = initialize_job(True, self.selected_vol, self.file, self.express_mode.isChecked())
-        self.job.moveToThread(self.job_thread)
 
-        self.job.do_test_run.emit()
-        self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
-        self.job.loading_complete_signal.connect(lambda data: \
-            self.go(data, validated_start_address))
-
-    def go(self, data, start_at):
-        init_avg = data[0]
-        self.inspection_sample_size = data[1]
-        self.skim_progress_bar.setTextVisible(False)
-        self.skim_progress_bar.setFormat(None)
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.finished_signal.connect(self.finished)
         self.job.skim_progress_signal.connect(self.skim_gui_update)
-
         self.job.executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
 
-        self.job.start.emit([start_at, init_avg])
+        self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
+        self.job.loading_complete_signal.connect(self.stop_loading_gui)
+        self.job.run(validated_start_address)
 
+    def stop_loading_gui(self, insp_sample_size):
+        self.inspection_sample_size = insp_sample_size
+        self.skim_progress_bar.setTextVisible(False)
+        self.skim_progress_bar.setFormat(None)
         self.main_clock.start(1000)
 
     def finished(self, success):

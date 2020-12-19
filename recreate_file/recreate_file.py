@@ -11,6 +11,7 @@ MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
 lock = Lock()
 job = None
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
+#executor = futures.ThreadPoolExecutor(max_workers=1)
 
 def check_sector(inp, addr, close_reader=None):
     try:
@@ -65,7 +66,7 @@ class CloseReader(DiskReader):
         job.perf.children.append(self.perf)
 
     def read(self):
-        current_thread().name = ("Close reader at " + hex(self.start_at))
+        current_thread().name = self.id_str
         self.fobj.seek(self.start_at)
         self.perf.start()
         for _ in range(self.sector_limit):
@@ -100,8 +101,7 @@ class ForwardCloseReader(CloseReader):
             job.perf.children.remove(self.perf)
             job.primary_reader.inspections.remove((hex(self.start_at), self))
         self.finished_signal.emit()
-        current_thread().name = ("Control returned from a forward inspection at " \
-                                    + hex(self.start_at))
+        current_thread().name = ("Control returned from " + self.id_str)
         job.primary_reader.request_resume()
 
 class BackwardCloseReader(CloseReader):
@@ -115,7 +115,7 @@ class BackwardCloseReader(CloseReader):
             job.perf.children.remove(self.perf)
             job.primary_reader.inspections.remove((hex(self.start_at), self))
         self.finished_signal.emit()
-        current_thread().name = ("Control returned from a backward inspection at " + hex(self.start_at))
+        current_thread().name = ("Control returned from " + self.id_str)
         job.primary_reader.request_resume()
 
 class PrimaryReader(DiskReader):
@@ -145,7 +145,7 @@ class PrimaryReader(DiskReader):
                 self.read(self.resume_at) # only resume if all children are finished
 
     def read(self, start_at):
-        current_thread().name = "Main program thread"
+        current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
         job.perf.start()
 
@@ -165,7 +165,7 @@ class PrimaryReader(DiskReader):
                 self.resuming_flag = False
         except: # TODO what type of exception is raised when fd reads past EOF?
             pass
-
+        current_thread().name = "Control returned from skim thread"
         #job.finished_signal.emit(False)
 
     def inspection_in_progress(self, addr):
@@ -178,10 +178,8 @@ class PrimaryReader(DiskReader):
 
 
 
-class Job(QtCore.QObject):
+class Job(QtCore.QThread):
 
-    do_test_run = QtCore.pyqtSignal()
-    start = QtCore.pyqtSignal(list)
     new_inspection_signal = QtCore.pyqtSignal(object)
     # PyQt event signaller
     success_signal = QtCore.pyqtSignal(int)
@@ -189,13 +187,11 @@ class Job(QtCore.QObject):
     #ready_signal = QtCore.pyqtSignal(bool)
     skim_progress_signal = QtCore.pyqtSignal()
     loading_progress_signal = QtCore.pyqtSignal(float)
-    loading_complete_signal = QtCore.pyqtSignal(tuple)
+    loading_complete_signal = QtCore.pyqtSignal(int)
     executor_queue_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, vol, file, do_logging, express):
         super().__init__()
-        self.do_test_run.connect(self.test_run)
-        self.start.connect(self.run)
         self.finished = False
         self.loading_progress = 0
         self.disk_path = r"\\." + "\\" + vol + ":"
@@ -230,7 +226,6 @@ class Job(QtCore.QObject):
         for i in range(len(self.rebuilt_file)):
             self.log.write("Sector " + i + ":\t\t" + self.rebuilt_file[i][0])
 
-    @QtCore.pyqtSlot()
     def test_run(self):
         def fake_function(inp):
             _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
@@ -250,12 +245,16 @@ class Job(QtCore.QObject):
             #self.loading_progress = 100 * _ / test_perf.sample_size
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.primary_reader.fobj.seek(self.primary_reader.jump_size, 1)
-        self.loading_complete_signal.emit((test_perf.avg, insp_sample_size))
+        self.loading_complete_signal.emit(insp_sample_size)
+        return test_perf.avg
 
     @QtCore.pyqtSlot(list)
-    def run(self, params):
-        start_at = params[0]
-        init_avg = params[1]
+    def run(self, start_at):
+        
+        init_avg = self.test_run()
+
+        #init_avg = params[1]
+
         if self.primary_reader.express:
             self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, jump_size=self.primary_reader.jump_size, init_avg=init_avg) # TODO implement kwargs so we don't have to put 1000 here
         else:
