@@ -5,11 +5,10 @@ from PyQt5 import QtCore
 
 SECTOR_SIZE = None
 DEFAULT_SAMPLE_SIZE = 1000
-express = True
 
 class PerformanceCalculator():
 
-    def __init__(self, volume_size, sector_size, **kwargs):
+    def __init__(self, volume_size, sector_size, jump_size, **kwargs):
 
         global SECTOR_SIZE
         SECTOR_SIZE = sector_size
@@ -24,14 +23,8 @@ class PerformanceCalculator():
         except KeyError:
             self.avg = 0
 
-        try:
-            self.jump_size = kwargs['jump_size']
-            self.total_sectors_to_read = ceil(volume_size / self.jump_size)
-            self.express = True
-        except KeyError:
-            self.jump_size = 1
-            self.total_sectors_to_read = ceil(volume_size / SECTOR_SIZE)
-            self.express = False
+        self.jump_size = jump_size
+        self.total_sectors_to_read = ceil(volume_size / self.jump_size)
 
         self.children = []
         self.cur_start = None
@@ -58,22 +51,21 @@ class PerformanceCalculator():
         return str(timedelta(seconds=result)).split(".")[0] + " remaining in skim"
 
     def get_remaining_estimate(self):
-        if express:
-            result = self.get_remaining_seconds()
-            if result != 1:
-                if not self.children:
-                    return self.get_remaining_seconds()
-                else:
-                    children_seconds = max([c.get_remaining_seconds() for c in self.children])
-                    if children_seconds > 0:
-                        result = str(timedelta(seconds=children_seconds)).split(".")[0] \
-                            + " until skim is resumed...\n" \
-                            + self.get_remaining_seconds()
-                    else:
-                        result = 'Calculating delay before resuming skim...'
-                    return result
+        result = self.get_remaining_seconds()
+        if result != 1:
+            if not self.children:
+                return self.get_remaining_seconds()
             else:
-                return "Calculating time remaining..."
+                children_seconds = max([c.get_remaining_seconds() for c in self.children])
+                if children_seconds > 0:
+                    result = str(timedelta(seconds=children_seconds)).split(".")[0] \
+                        + " until skim is resumed...\n" \
+                        + self.get_remaining_seconds()
+                else:
+                    result = 'Calculating delay before resuming skim...'
+                return result
+        else:
+            return "Calculating time remaining..."
 
 class InspectionPerformanceCalc(QtCore.QObject):
 

@@ -10,8 +10,9 @@ from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job, SECTOR_SIZE
+from recreate_file import Job
 
+SECTOR_SIZE = 512
 window = None
 
 class SourceFile():
@@ -90,6 +91,8 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("recoverability")        
 
+        self.job = None
+        
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
 
@@ -126,12 +129,6 @@ class MainWindow(QWidget):
 
         self.time_remaining = QLabel()
 
-        self.express_mode = QCheckBox("Express mode (only disable for small volumes)")
-        self.express_mode.setChecked(True)
-
-        self.do_logging = QCheckBox("Log (./ntfs-toolbox/...)")
-        self.do_logging.setChecked(True)
-
         self.current_addr = QPushButton('Display current address')
         self.current_addr.clicked.connect(lambda: \
             self.current_addr.setText(hex(self.job.primary_reader.fobj.tell())))
@@ -148,9 +145,6 @@ class MainWindow(QWidget):
 
         grid = QGridLayout()
         grid.addWidget(self.file_info_box, 0, 0)
-
-        grid.addWidget(self.express_mode, 7, 0)
-        grid.addWidget(self.do_logging, 8, 0)
 
         self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         grid.addWidget(self.skim_percentage, 6, 2)
@@ -277,8 +271,6 @@ class MainWindow(QWidget):
                 self.start_button.setText('...')
                 self.start_button.setDisabled(True)
                 self.start_at.setDisabled(True)
-                self.express_mode.setDisabled(True)
-                self.do_logging.setDisabled(True)
                 return int(inp, 16)
             else:
                 return None
@@ -297,7 +289,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.job = Job(self.selected_vol, self.file, True, self.express_mode.isChecked())
+        self.job = Job(self.selected_vol, self.file, SECTOR_SIZE)
 
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(self.initialize_inspection_gui)

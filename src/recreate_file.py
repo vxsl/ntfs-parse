@@ -6,8 +6,8 @@ from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
 
-SECTOR_SIZE = 512 # bytes
-MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
+SECTOR_SIZE = None
+MEANINGLESS_SECTORS = None
 lock = Lock()
 job = None
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
@@ -26,7 +26,7 @@ def check_sector(inp, addr, close_reader=None):
         if close_reader:
             close_reader.success_count += 1
             close_reader.consecutive_successes += 1
-        elif job.primary_reader.express and not job.primary_reader.inspection_in_progress(addr):
+        elif not job.primary_reader.inspection_in_progress(addr):
             executor.submit(job.begin_close_inspection, actual_address)
         #if all(not _ or _ in MEANINGLESS_SECTORS for _ in job.file.remaining_sectors) \
         if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
@@ -112,14 +112,9 @@ class PrimaryReader(DiskReader):
 
     resume_signal = QtCore.pyqtSignal()
 
-    def __init__(self, disk_path, **kwargs):
+    def __init__(self, disk_path, jump_size, **kwargs):
         super().__init__(disk_path)
-        try:
-            self.jump_size = kwargs['jump_size'] * SECTOR_SIZE
-            self.express = True
-        except KeyError:
-            self.jump_size = 0
-            self.express = False
+        self.jump_size = jump_size * SECTOR_SIZE
         self.inspections = []
         self.resume_at = None
         self.resume_signal.connect(self.request_resume)
@@ -180,9 +175,17 @@ class Job(QtCore.QThread):
     loading_complete_signal = QtCore.pyqtSignal(int)
     executor_queue_signal = QtCore.pyqtSignal(int)
 
-    def __init__(self, vol, file, do_logging, express):
+    def __init__(self, vol, file, sector_size):
         super().__init__()
+
+        global SECTOR_SIZE
+        SECTOR_SIZE = sector_size
+        global MEANINGLESS_SECTORS
+        MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
+
         self.finished = False
+        self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
+        os.makedirs(self.dir_name, mode=0o755)
         self.loading_progress = 0
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.volume_size = disk_usage(vol + ':\\')
@@ -191,30 +194,15 @@ class Job(QtCore.QThread):
         self.perf = None
         self.total_sectors = len(file.remaining_sectors)
         self.rebuilt_file = [None] * self.total_sectors
-        #self.finished_signal.connect(self.build_file)
 
-        if express:
-            jump_size = self.total_sectors // 2
-            self.primary_reader = PrimaryReader(self.disk_path, jump_size=jump_size)
-        else:
-            self.primary_reader = PrimaryReader(self.disk_path)
-
-        if do_logging:
-            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
-            os.makedirs(self.dir_name, mode=0o755)
-            self.log = open(self.dir_name + '/' + self.file.name + ".log", 'w')
-        else:
-            self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
-            os.makedirs(self.dir_name, mode=0o755)
-            self.log = open(self.dir_name + '/' + self.file.name + ".log", 'w')
-            # do something...
-            print("Undefined behaviour")
+        jump_size = self.total_sectors // 2
+        self.primary_reader = PrimaryReader(self.disk_path, jump_size)
 
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
 
         global job
         job = self
-
+        
     def update_log(self):
         for i in range(len(self.rebuilt_file)):
             self.log.write("Sector " + i + ":\t\t" + self.rebuilt_file[i][0])
@@ -223,11 +211,8 @@ class Job(QtCore.QThread):
         def fake_function(inp):
             _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
 
-        if self.primary_reader.express:
-            test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, sample_size=100, jump_size=self.primary_reader.jump_size)
-            insp_sample_size = InspectionPerformanceCalc(SECTOR_SIZE, '').sample_size
-        else:
-            test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, sample_size=100)
+        test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.primary_reader.jump_size, sample_size=100)
+        insp_sample_size = InspectionPerformanceCalc(SECTOR_SIZE, '').sample_size
 
         self.primary_reader.fobj.seek(0)
         test_perf.start()
@@ -242,16 +227,9 @@ class Job(QtCore.QThread):
         return test_perf.avg
 
     @QtCore.pyqtSlot(list)
-    def run(self, start_at):
-        
+    def run(self, start_at):        
         init_avg = self.test_run()
-
-        #init_avg = params[1]
-
-        if self.primary_reader.express:
-            self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, jump_size=self.primary_reader.jump_size, init_avg=init_avg) # TODO implement kwargs so we don't have to put 1000 here
-        else:
-            self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, init_avg=init_avg)
+        self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.primary_reader.jump_size, init_avg=init_avg) # TODO implement kwargs so we don't have to put 1000 here        
         self.primary_reader.read(start_at)
 
     class CloseInspection(QtCore.QObject):
@@ -291,10 +269,4 @@ class Job(QtCore.QThread):
             out_file.flush()
         out_file.close()
         self.finished_signal.emit(True)
-
-
-def initialize_job(do_logging, selected_vol, file, express):
-    global job
-    job = Job(selected_vol, file, do_logging, express)
-    return job
 
