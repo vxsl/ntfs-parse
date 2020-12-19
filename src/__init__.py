@@ -1,6 +1,8 @@
 import string
 import os
-from PyQt5.QtWidgets import QFileDialog, QDialog, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QVBoxLayout, QApplication, QCheckBox
+from PyQt5.QtWidgets import QMessageBox, QFileDialog, QDialog, \
+    QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QVBoxLayout, \
+    QApplication, QCheckBox
 import gui
 
 class ChooseSourceFileDialog(QFileDialog):
@@ -20,7 +22,6 @@ class StartDialog(QDialog):
         vbox.addWidget(self.vol_select_dropdown)
 
         self.include_raw = QCheckBox("Include raw disks ")
-        self.include_raw.setStyleSheet("font-style:italic")
         self.include_raw.stateChanged.connect(self.render_vols)
         self.include_raw.setChecked(True)
 
@@ -49,16 +50,24 @@ class StartDialog(QDialog):
         self.vol_select_dropdown.addItems(vols)
 
 app = QApplication([])
-
 disk_select = StartDialog()
 disk_select.setWindowTitle('recoverability')
-disk_select.exec()
-
-selected_vol = disk_select.vol_select_dropdown.currentText()[0]
-
 file_select = ChooseSourceFileDialog()
-file_select.exec()
-path = file_select.selectedFiles()[0]
+
+while True:
+    disk_select.exec()
+    selected_vol = disk_select.vol_select_dropdown.currentText()[0]
+    file_select.exec()
+    path = file_select.selectedFiles()[0]
+    if path.split(":")[0] == selected_vol:
+        error = QMessageBox()
+        error.setWindowTitle('recoverability')
+        error.setIcon(QMessageBox.Warning)
+        error.setText('Your source file cannot be loaded from the same volume you are searching, because the rebuilt file will be created in the same directory.\n\nPlease choose a different source file or volume to search.')
+        error.setStandardButtons(QMessageBox.Ok)
+        error.exec()
+    else:
+        break
 
 window = gui.MainWindow(selected_vol, path)
 window.setWindowTitle('recoverability')
