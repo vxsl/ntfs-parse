@@ -129,9 +129,8 @@ class MainWindow(QWidget):
 
         self.time_remaining = QLabel()
 
-        self.current_addr = QPushButton('Display current address')
-        self.current_addr.clicked.connect(lambda: \
-            self.current_addr.setText(hex(self.job.primary_reader.fobj.tell())))
+        self.current_addr = QPushButton('Display current address in skim')
+        self.current_addr.clicked.connect(self.display_current_skim_address)
 
         self.start_button = QPushButton('Start')
         self.start_button.clicked.connect(self.start)
@@ -157,7 +156,7 @@ class MainWindow(QWidget):
 
         self.executor_queue = QLabel()
         self.executor_queue.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.executor_queue, 7, 2)
+        grid.addWidget(self.executor_queue, 10, 2)
 
         self.current_inspections = {}
         self.current_inspection_averages = {}
@@ -179,6 +178,12 @@ class MainWindow(QWidget):
         self.setLayout(grid)
 
         current_thread().name = "MAIN GUI THREAD"
+
+    def display_current_skim_address(self):
+        if not self.current_inspections:
+            self.current_addr.setText(hex(self.job.skim_reader.fobj.tell()))
+        else:
+            self.current_addr.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
 
     def render_main_clock(self):
         self.time = self.time.addSecs(-1)

@@ -6,33 +6,29 @@ from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
 
-SECTOR_SIZE = None
-MEANINGLESS_SECTORS = None
 lock = Lock()
-job = None
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
 #executor = futures.ThreadPoolExecutor(max_workers=1)
 
 def check_sector(inp, addr, close_reader=None):
     try:
-        i = job.file.remaining_sectors.index(inp)
+        i = JOB.file.remaining_sectors.index(inp)
         actual_address = addr - SECTOR_SIZE
-        job.file.address_table[i].append(actual_address)
-        job.file.remaining_sectors[i] = None
-        if len(job.file.address_table[i]) == 1:
-            job.success_signal.emit(i)
+        JOB.file.address_table[i].append(actual_address)
+        JOB.file.remaining_sectors[i] = None
+        if len(JOB.file.address_table[i]) == 1:
+            JOB.success_signal.emit(i)
         else:
             print('duplicate found') # TODO implement duplicate sector counter (how many are meaningless?)
         if close_reader:
             close_reader.success_count += 1
             close_reader.consecutive_successes += 1
-        elif not job.primary_reader.inspection_in_progress(addr):
-            executor.submit(job.begin_close_inspection, actual_address)
-        #if all(not _ or _ in MEANINGLESS_SECTORS for _ in job.file.remaining_sectors) \
-        if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
-            and not job.finished:
+        elif not JOB.skim_reader.inspection_in_progress(addr):
+            executor.submit(JOB.begin_close_inspection, actual_address)
+        if all(_ in MEANINGLESS_SECTORS for _ in filter(None, JOB.file.remaining_sectors)) \
+            and not JOB.finished:
             with lock:
-                job.finish()
+                JOB.finish()
         return
     except ValueError:  # inp did not exist in job.file.remaining_sectors
         if close_reader:
@@ -52,9 +48,9 @@ class CloseReader(DiskReader):
     finished_signal = QtCore.pyqtSignal()
 
     def __init__(self, start_at, backward=False):
-        super().__init__(job.disk_path)
+        super().__init__(JOB.disk_path)
         self.start_at = start_at
-        self.sector_limit = job.total_sectors #???
+        self.sector_limit = JOB.total_sectors #???
         self.sector_count = 0
         self.success_count = 0
         self.consecutive_successes = 0
@@ -63,7 +59,7 @@ class CloseReader(DiskReader):
         else:
             self.id_str = "fwd" + hex(start_at)
         self.perf = InspectionPerformanceCalc(self.sector_limit, self.id_str)
-        job.perf.children.append(self.perf)
+        JOB.perf.children.append(self.perf)
 
     def read(self):
         current_thread().name = self.id_str
@@ -71,7 +67,7 @@ class CloseReader(DiskReader):
         self.perf.start()
         for _ in range(self.sector_limit):
             data = self.fobj.read(SECTOR_SIZE)
-            if job.finished or not data:
+            if JOB.finished or not data:
                 break
             if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
                 executor.submit(check_sector, data, self.fobj.tell(), self)
@@ -82,17 +78,17 @@ class CloseReader(DiskReader):
 
     def emit_progress(self):
         self.progress_signal.emit((self.sector_count, self.success_count))
-        job.executor_queue_signal.emit(executor._work_queue.qsize())
+        JOB.executor_queue_signal.emit(executor._work_queue.qsize())
 
 class ForwardCloseReader(CloseReader):
     def read(self):
         super().read()
         with lock:
-            job.perf.children.remove(self.perf)
-            job.primary_reader.inspections.remove((hex(self.start_at), self))
+            JOB.perf.children.remove(self.perf)
+            JOB.skim_reader.inspections.remove((hex(self.start_at), self))
         self.finished_signal.emit()
         current_thread().name = ("Control returned from " + self.id_str)
-        job.primary_reader.request_resume()
+        JOB.skim_reader.request_resume()
 
 class BackwardCloseReader(CloseReader):
     def __init__(self, start_at):
@@ -102,13 +98,13 @@ class BackwardCloseReader(CloseReader):
     def read(self):
         super().read()
         with lock:
-            job.perf.children.remove(self.perf)
-            job.primary_reader.inspections.remove((hex(self.start_at), self))
+            JOB.perf.children.remove(self.perf)
+            JOB.skim_reader.inspections.remove((hex(self.start_at), self))
         self.finished_signal.emit()
         current_thread().name = ("Control returned from " + self.id_str)
-        job.primary_reader.request_resume()
+        JOB.skim_reader.request_resume()
 
-class PrimaryReader(DiskReader):
+class SkimReader(DiskReader):
 
     resume_signal = QtCore.pyqtSignal()
 
@@ -132,20 +128,20 @@ class PrimaryReader(DiskReader):
     def read(self, start_at):
         current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
-        job.perf.start()
+        JOB.perf.start()
 
         try:
             while True:
                 data = self.fobj.read(SECTOR_SIZE)
-                if self.inspections or job.finished or not data:
+                if self.inspections or JOB.finished or not data:
                     break
                 if data not in MEANINGLESS_SECTORS:
                     executor.submit(check_sector, data, self.fobj.tell())
-                executor.submit(job.perf.increment)
-                job.skim_progress_signal.emit()
+                executor.submit(JOB.perf.increment)
+                JOB.skim_progress_signal.emit()
                 self.fobj.seek(self.jump_size, 1)
 
-            if self.inspections and not job.finished:
+            if self.inspections and not JOB.finished:
                 self.resume_at = self.fobj.tell()
                 self.resuming_flag = False
         except: # TODO what type of exception is raised when fd reads past EOF?
@@ -196,12 +192,12 @@ class Job(QtCore.QThread):
         self.rebuilt_file = [None] * self.total_sectors
 
         jump_size = self.total_sectors // 2
-        self.primary_reader = PrimaryReader(self.disk_path, jump_size)
+        self.skim_reader = SkimReader(self.disk_path, jump_size)
 
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
 
-        global job
-        job = self
+        global JOB
+        JOB = self
         
     def update_log(self):
         for i in range(len(self.rebuilt_file)):
@@ -209,28 +205,28 @@ class Job(QtCore.QThread):
 
     def test_run(self):
         def fake_function(inp):
-            _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
+            _  = [i for i, sector in enumerate(JOB.file.remaining_sectors) if sector == inp]
 
-        test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.primary_reader.jump_size, sample_size=100)
+        test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, sample_size=100)
         insp_sample_size = InspectionPerformanceCalc(SECTOR_SIZE, '').sample_size
 
-        self.primary_reader.fobj.seek(0)
+        self.skim_reader.fobj.seek(0)
         test_perf.start()
         for _ in range(test_perf.sample_size + 1):
-            data = self.primary_reader.fobj.read(SECTOR_SIZE)
+            data = self.skim_reader.fobj.read(SECTOR_SIZE)
             executor.submit(fake_function, data)
             test_perf.increment()
             #self.loading_progress = 100 * _ / test_perf.sample_size
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
-            self.primary_reader.fobj.seek(self.primary_reader.jump_size, 1)
+            self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
         self.loading_complete_signal.emit(insp_sample_size)
         return test_perf.avg
 
     @QtCore.pyqtSlot(list)
     def run(self, start_at):        
         init_avg = self.test_run()
-        self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.primary_reader.jump_size, init_avg=init_avg) # TODO implement kwargs so we don't have to put 1000 here        
-        self.primary_reader.read(start_at)
+        self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg) # TODO implement kwargs so we don't have to put 1000 here        
+        self.skim_reader.read(start_at)
 
     class CloseInspection(QtCore.QObject):
 
@@ -239,8 +235,8 @@ class Job(QtCore.QThread):
             self.addr = addr
             self.forward = ForwardCloseReader(addr)
             self.backward = BackwardCloseReader(addr)
-            job.primary_reader.inspections.append((hex(self.addr), self.forward))
-            job.primary_reader.inspections.append((hex(self.addr), self.backward))
+            JOB.skim_reader.inspections.append((hex(self.addr), self.forward))
+            JOB.skim_reader.inspections.append((hex(self.addr), self.backward))
             executor.submit(self.forward.read)
             executor.submit(self.backward.read)
 
@@ -253,17 +249,17 @@ class Job(QtCore.QThread):
 
         self.finished = True
 
-        for sector in filter(None, job.file.remaining_sectors):
+        for sector in filter(None, JOB.file.remaining_sectors):
             if sector in MEANINGLESS_SECTORS:
-                i = job.file.remaining_sectors.index(sector)
-                job.file.address_table[i] = sector
-                job.file.remaining_sectors[i] = None
+                i = JOB.file.remaining_sectors.index(sector)
+                JOB.file.address_table[i] = sector
+                JOB.file.remaining_sectors[i] = None
 
         fd = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
         out_file = open(self.rebuilt_file_path, 'wb')
         """ for addr, sector in self.rebuilt_file:
             out_file.write(sector) """
-        for addresses in job.file.address_table:
+        for addresses in JOB.file.address_table:
             fd.seek(addresses[0])
             out_file.write(fd.read(SECTOR_SIZE))
             out_file.flush()
