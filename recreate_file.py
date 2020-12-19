@@ -222,6 +222,9 @@ class Job(QtCore.QThread):
 
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
 
+        global job
+        job = self
+
     def update_log(self):
         for i in range(len(self.rebuilt_file)):
             self.log.write("Sector " + i + ":\t\t" + self.rebuilt_file[i][0])
@@ -299,29 +302,6 @@ class Job(QtCore.QThread):
         out_file.close()
         self.finished_signal.emit(True)
 
-class SourceFile():
-    def __init__(self, path):
-        self.remaining_sectors = self.to_sectors(path)
-        self.address_table = [[] for _ in range(len(self.remaining_sectors))]
-        #self.remaining_sectors = copy.deepcopy(self.sectors)
-        split = path.split('/')
-        self.dir = '/'.join(split[0:(len(split) - 1)])
-        self.name = split[len(split) - 1]
-
-    def to_sectors(self, path):
-        fobj = open(path, "rb")
-        fobj.seek(0)
-        result = []
-        while True:
-            cur = fobj.read(SECTOR_SIZE)
-            if cur == b'':
-                break
-            elif len(cur) == SECTOR_SIZE:
-                result.append(cur)
-            else:
-                result.append(\
-                (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
-        return result
 
 def initialize_job(do_logging, selected_vol, file, express):
     global job
