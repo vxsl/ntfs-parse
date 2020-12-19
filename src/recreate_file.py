@@ -161,8 +161,9 @@ class Job(QtCore.QObject):
     finished_signal = QtCore.pyqtSignal(bool)
     skim_progress_signal = QtCore.pyqtSignal()
     loading_progress_signal = QtCore.pyqtSignal(float)
-    loading_complete_signal = QtCore.pyqtSignal(int)
+    loading_complete_signal = QtCore.pyqtSignal(tuple)
     executor_queue_signal = QtCore.pyqtSignal(int)
+    perf_created_signal = QtCore.pyqtSignal()
 
     def __init__(self, vol, file, sector_size, start_at):
         super().__init__()
@@ -207,12 +208,13 @@ class Job(QtCore.QObject):
             test_perf.increment()
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
-        self.loading_complete_signal.emit(insp_sample_size)
+        self.loading_complete_signal.emit((insp_sample_size, (test_perf.avg, test_perf.get_remaining_seconds())))
         return test_perf.avg
 
     def run(self):        
-        init_avg = self.test_run()
+        init_avg = self.test_run() * 10
         self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
+        self.perf_created_signal.emit()
         self.skim_reader.read(self.start_at)
 
     class CloseInspection(QtCore.QObject):

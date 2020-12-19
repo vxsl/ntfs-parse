@@ -187,16 +187,22 @@ class MainWindow(QWidget):
             self.current_addr.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
 
     def render_main_clock(self):
-        self.time = self.time.addSecs(-1)
-        the_time = self.time.toString("h:mm:ss")
-        if self.current_slowest_inspection:
-            self.time_remaining.setText("Average time to parse " \
-                + str(len(self.current_inspections) * self.inspection_sample_size) \
-                + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
-                + " s\n" + the_time + " remaining to finish all close inspections.\n")
+        if self.current_inspections:
+            if self.current_slowest_inspection:
+                self.time = self.time.addSecs(-1)                
+                the_time = self.time.toString("h:mm:ss")
+                self.time_remaining.setText("Average time to parse " \
+                    + str(len(self.current_inspections) * self.inspection_sample_size) \
+                    + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
+                    + " s\n" + the_time + " remaining to finish all close inspections.\n")
+            else:
+                self.time_remaining.setText(self.time.toString("h:mm:ss") + \
+                    " remaining in skim (paused)... calculating time remaining in close inspection(s).")
         else:
+            self.time = self.time.addSecs(-1)                
+            the_time = self.time.toString("h:mm:ss")
             self.time_remaining.setText(the_time + " remaining in skim")
-
+            
     def closeEvent(self, event):
         if not self.job.finished:
             reply = QMessageBox.question(self, 'Window Close', 'Searching is not finished. Are you sure you want to close the window?',
@@ -209,7 +215,17 @@ class MainWindow(QWidget):
             else:
                 event.ignore()
 
-    def new_average(self, data):
+    def new_skim_average(self, data):
+        avg = data[0]
+        estimate = data[1]
+        self.sector_avg.setText("Average time to skim " \
+            + str(self.job.perf.sample_size * self.job.perf.jump_size) + " sectors (" \
+            + str(self.job.perf.sample_size * self.job.perf.jump_size * 512 / 1000000) \
+            + " MB): {:.2f}".format(avg) + " seconds")
+        self.time.setHMS(0,0,0)
+        self.time = self.time.addSecs(estimate)
+
+    def new_inspection_average(self, data):
         id_str = data[1]
         avg = data[0]
 
@@ -227,8 +243,8 @@ class MainWindow(QWidget):
         label_prefix = "Close inspection at " + hex(inspection.addr)
         label = QLabel(label_prefix)
 
-        inspection.forward.perf.new_average_signal.connect(self.new_average)
-        inspection.backward.perf.new_average_signal.connect(self.new_average)
+        inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
+        inspection.backward.perf.new_average_signal.connect(self.new_inspection_average)
 
         forward_gui = InspectionModel(inspection.forward.id_str, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
         backward_gui = InspectionModel(inspection.backward.id_str, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
@@ -304,17 +320,19 @@ class MainWindow(QWidget):
         self.job.finished_signal.connect(self.finished)
         self.job.skim_progress_signal.connect(self.skim_gui_update)
         self.job.executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
+        self.job.perf_created_signal.connect(lambda: self.job.perf.new_average_signal.connect(self.new_skim_average))
 
         self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
-        self.job.loading_complete_signal.connect(self.stop_loading_gui)
-
+        self.job.loading_complete_signal.connect(self.loading_finished)
+        
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
 
-    def stop_loading_gui(self, insp_sample_size):
-        self.inspection_sample_size = insp_sample_size
+    def loading_finished(self, data):
+        self.inspection_sample_size = data[0]
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
+        self.new_skim_average(data[1])
         self.main_clock.start(1000)
 
     def finished(self, success):
@@ -334,7 +352,4 @@ class MainWindow(QWidget):
         percent = 100 * progress / self.job.perf.total_sectors_to_read
         self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
-        self.sector_avg.setText("Average time to skim " \
-        + str(self.job.perf.sample_size * self.job.perf.jump_size) \
-        + " sectors (" + str(self.job.perf.sample_size * self.job.perf.jump_size * 512 / 1000000) \
-        + " MB): {:.2f}".format(self.job.perf.avg) + " seconds")
+        

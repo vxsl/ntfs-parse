@@ -6,10 +6,12 @@ from PyQt5 import QtCore
 SECTOR_SIZE = None
 DEFAULT_SAMPLE_SIZE = 1000
 
-class PerformanceCalculator():
+class PerformanceCalculator(QtCore.QObject):
+
+    new_average_signal = QtCore.pyqtSignal(tuple)
 
     def __init__(self, volume_size, sector_size, jump_size, **kwargs):
-
+        super().__init__()
         global SECTOR_SIZE
         SECTOR_SIZE = sector_size
 
@@ -43,29 +45,12 @@ class PerformanceCalculator():
                 self.avg = (self.avg / 2)
             else:
                 self.avg += (perf_counter() - self.cur_start)
+            self.new_average_signal.emit((self.avg, self.get_remaining_seconds()))
             self.start()
 
     def get_remaining_seconds(self):
-        result = (self.avg / (self.sample_size)) * \
+        return (self.avg / (self.sample_size)) * \
                 (self.total_sectors_to_read - self.sectors_read)
-        return str(timedelta(seconds=result)).split(".")[0] + " remaining in skim"
-
-    def get_remaining_estimate(self):
-        result = self.get_remaining_seconds()
-        if result != 1:
-            if not self.children:
-                return self.get_remaining_seconds()
-            else:
-                children_seconds = max([c.get_remaining_seconds() for c in self.children])
-                if children_seconds > 0:
-                    result = str(timedelta(seconds=children_seconds)).split(".")[0] \
-                        + " until skim is resumed...\n" \
-                        + self.get_remaining_seconds()
-                else:
-                    result = 'Calculating delay before resuming skim...'
-                return result
-        else:
-            return "Calculating time remaining..."
 
 class InspectionPerformanceCalc(QtCore.QObject):
 
