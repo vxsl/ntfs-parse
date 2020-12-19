@@ -71,7 +71,7 @@ class CloseReader(DiskReader):
         self.perf.start()
         for _ in range(self.sector_limit):
             data = self.fobj.read(SECTOR_SIZE)
-            if job.finished or not data or self.should_quit():
+            if job.finished or not data:
                 break
             if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
                 executor.submit(check_sector, data, self.fobj.tell(), self)
@@ -83,16 +83,6 @@ class CloseReader(DiskReader):
     def emit_progress(self):
         self.progress_signal.emit((self.sector_count, self.success_count))
         job.executor_queue_signal.emit(executor._work_queue.qsize())
-
-    def should_quit(self):
-        """ if self.sector_count > 0.15 * self.sector_limit \
-        and self.success_count < 0.25 * self.sector_count \
-        and self.consecutive_successes == 0:
-            return True
-            # TODO store info for later check if all else proves unsuccessful
-        else:
-            return False """
-        return False
 
 class ForwardCloseReader(CloseReader):
     def read(self):
