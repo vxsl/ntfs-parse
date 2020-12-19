@@ -43,6 +43,7 @@ class SourceFile():
 class FinishedDialog(QMessageBox):
     def __init__(self, success, path):
         super().__init__()
+        self.setWindowTitle('recoverability')
         self.setIcon(QMessageBox.Warning)
         if success:
             self.setText('Finished: output written to ' + path)
@@ -294,7 +295,9 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.job = Job(self.selected_vol, self.file, SECTOR_SIZE)
+        self.job_thread = QtCore.QThread()
+        self.job = Job(self.selected_vol, self.file, SECTOR_SIZE, validated_start_address)
+        self.job.moveToThread(self.job_thread)
 
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(self.initialize_inspection_gui)
@@ -304,7 +307,9 @@ class MainWindow(QWidget):
 
         self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
         self.job.loading_complete_signal.connect(self.stop_loading_gui)
-        self.job.run(validated_start_address)
+
+        self.job_thread.started.connect(self.job.run)
+        self.job_thread.start()
 
     def stop_loading_gui(self, insp_sample_size):
         self.inspection_sample_size = insp_sample_size

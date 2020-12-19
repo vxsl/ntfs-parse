@@ -154,7 +154,7 @@ class SkimReader(DiskReader):
                 return True
         return False
 
-class Job(QtCore.QThread):
+class Job(QtCore.QObject):
 
     new_inspection_signal = QtCore.pyqtSignal(object)
     success_signal = QtCore.pyqtSignal(int)
@@ -164,7 +164,7 @@ class Job(QtCore.QThread):
     loading_complete_signal = QtCore.pyqtSignal(int)
     executor_queue_signal = QtCore.pyqtSignal(int)
 
-    def __init__(self, vol, file, sector_size):
+    def __init__(self, vol, file, sector_size, start_at):
         super().__init__()
 
         global SECTOR_SIZE
@@ -180,6 +180,7 @@ class Job(QtCore.QThread):
         self.loading_progress = 0
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.volume_size = disk_usage(vol + ':\\')
+        self.start_at = start_at
         self.file = file
         self.done_sectors = 0
         self.perf = None
@@ -209,11 +210,10 @@ class Job(QtCore.QThread):
         self.loading_complete_signal.emit(insp_sample_size)
         return test_perf.avg
 
-    @QtCore.pyqtSlot(list)
-    def run(self, start_at):        
+    def run(self):        
         init_avg = self.test_run()
         self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
-        self.skim_reader.read(start_at)
+        self.skim_reader.read(self.start_at)
 
     class CloseInspection(QtCore.QObject):
         def __init__(self, addr):
