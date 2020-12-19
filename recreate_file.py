@@ -4,7 +4,7 @@ from threading import Lock, current_thread
 from concurrent import futures
 from multiprocessing import cpu_count
 from PyQt5 import QtCore
-from .performance.performance import PerformanceCalculator, InspectionPerformanceCalc
+from performance import PerformanceCalculator, InspectionPerformanceCalc
 
 SECTOR_SIZE = 512 # bytes
 MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]

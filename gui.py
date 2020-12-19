@@ -10,9 +10,34 @@ from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from .recreate_file import initialize_job, SourceFile
+from recreate_file import Job, SECTOR_SIZE
 
 window = None
+
+class SourceFile():
+    def __init__(self, path):
+        self.remaining_sectors = self.to_sectors(path)
+        self.address_table = [[] for _ in range(len(self.remaining_sectors))]
+        #self.remaining_sectors = copy.deepcopy(self.sectors)
+        split = path.split('/')
+        self.dir = '/'.join(split[0:(len(split) - 1)])
+        self.name = split[len(split) - 1]
+
+    def to_sectors(self, path):
+        fobj = open(path, "rb")
+        fobj.seek(0)
+        result = []
+        while True:
+            cur = fobj.read(SECTOR_SIZE)
+            if cur == b'':
+                break
+            elif len(cur) == SECTOR_SIZE:
+                result.append(cur)
+            else:
+                result.append(\
+                (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
+        return result
+
 
 class FinishedDialog(QMessageBox):
     def __init__(self, success, path):
@@ -272,7 +297,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.job = initialize_job(True, self.selected_vol, self.file, self.express_mode.isChecked())
+        self.job = Job(self.selected_vol, self.file, True, self.express_mode.isChecked())
 
         self.job.success_signal.connect(self.visualize_file_progress)
         self.job.new_inspection_signal.connect(self.initialize_inspection_gui)

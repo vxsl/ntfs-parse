@@ -1,7 +1,7 @@
 import string
 import os
 from PyQt5.QtWidgets import QFileDialog, QDialog, QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QVBoxLayout, QApplication, QCheckBox
-from recreate_file import gui
+import gui
 
 class ChooseSourceFileDialog(QFileDialog):
     def __init__(self):
