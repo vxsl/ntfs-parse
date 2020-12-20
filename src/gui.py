@@ -67,15 +67,13 @@ class InspectionModel(QtCore.QObject):
 
     @QtCore.pyqtSlot(tuple)
     def update(self, info):
-        sector_count = info[0]
-        success_count = info[1]
-        self.progress_bar.setValue(100 * sector_count / self.sector_limit)
+        self.progress_bar.setValue(100 * info[0] / self.sector_limit)
         if self.avg > 0:
-            self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
-                                + '\n' + '{:.4f}'.format(100 * success_count / sector_count) \
+            self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
+                                + '\n' + '{:.4f}'.format(100 * info[1] / info[0]) \
                                 + "% success")
         else:
-            self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
+            self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
                                 + '\n...\n...')
 
     def finish(self):
@@ -138,10 +136,9 @@ class MainWindow(QWidget):
 
         #self.main_clock = QtCore.QTimer(self)
         self.time_remaining = QLabel()
-        self.time = QtCore.QTime(0, 1, 0)
+        self.time = QtCore.QTime(0, 0, 0)
         self.main_clock = QtCore.QTimer(self)
         self.main_clock.timeout.connect(self.render_main_clock)
-        #self.main_clock.timeout.connect(lambda: self.main_clock.setText)
 
         grid = QGridLayout()
         grid.addWidget(self.file_info_box, 0, 0)
