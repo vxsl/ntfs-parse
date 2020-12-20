@@ -4,13 +4,13 @@ from shutil import disk_usage
 import sys
 # Third-party imports
 from PyQt5 import QtCore
-from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
-                            QLabel, QLineEdit, QPushButton, QCheckBox, \
+from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
+                            QLabel, QLineEdit, QPushButton, \
                             QWidget, QProgressBar, QMessageBox, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job, Worker
+from recreate_file import Job
 
 SECTOR_SIZE = 512
 window = None
@@ -154,10 +154,6 @@ class MainWindow(QWidget):
         self.time_remaining.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         grid.addWidget(self.time_remaining, 8, 2)
 
-        self.executor_queue = QLabel()
-        self.executor_queue.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.executor_queue, 10, 2)
-
         self.current_inspections = {}
         self.current_inspection_averages = {}
         self.current_slowest_inspection = None
@@ -240,7 +236,7 @@ class MainWindow(QWidget):
             self.current_inspection_averages = {}
 
     def initialize_inspection_gui(self, inspection):
-        label_prefix = hex(inspection.addr)
+        label_prefix = hex(inspection.address)
         label = QLabel(label_prefix)
 
         inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
@@ -314,12 +310,10 @@ class MainWindow(QWidget):
         self.job_thread = QtCore.QThread()
         self.job = Job(self.selected_vol, self.file, SECTOR_SIZE, validated_start_address)
         self.job.moveToThread(self.job_thread)
-        #self.job_thread.setPriority(4)
 
-        #executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
-        self.job.skim_reader.resumed_signal.connect(self.resume_skim_gui)
+        self.job.skim_reader.resumed_signal.connect(self.inspections_box.hide)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
 
@@ -327,7 +321,6 @@ class MainWindow(QWidget):
         self.job.loading_complete_signal.connect(self.loading_finished)
         
         self.job_thread.started.connect(self.job.run)
-        #self.job_thread.setPriority(5)
         self.job_thread.start()
 
         #QtCore.QThreadPool.globalInstance().start(Worker(self.job.run), 1)
@@ -345,19 +338,11 @@ class MainWindow(QWidget):
         self.close()
 
     def file_gui_update(self, i):
-        self.job.done_sectors += 1
         self.successes.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
         + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
         + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
-
-    def resume_skim_gui(self):        
-        #self.inspections_vbox.setParent(None)
-        self.inspections_box.hide()
-        """ for i in reversed(range(self.inspections_vbox.count())): 
-            self.inspections_vbox.itemAt(i).widget().setParent(None) """
-
         
     def skim_gui_update(self):
         progress =  self.job.skim_reader.perf.sectors_read

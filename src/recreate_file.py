@@ -1,7 +1,6 @@
 import time, os
 from shutil import disk_usage
 from threading import Lock, current_thread
-from concurrent import futures
 from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
@@ -27,13 +26,13 @@ class Worker(QtCore.QRunnable):
 
     @QtCore.pyqtSlot()
     def check_sector(self, inp, addr, close_reader=None):
-        
         try:
             i = job.file.remaining_sectors.index(inp)
             actual_address = addr - SECTOR_SIZE
             job.file.address_table[i].append(actual_address)
             job.file.remaining_sectors[i] = None
             if len(job.file.address_table[i]) == 1:
+                job.done_sectors += 1
                 job.success_signal.emit(i)
             if close_reader:
                 close_reader.success_count += 1
@@ -106,7 +105,7 @@ class SkimReader(DiskReader):
     resumed_signal = QtCore.pyqtSignal()
     progress_signal = QtCore.pyqtSignal(float)
 
-    def __init__(self, disk_path, jump_size, **kwargs):
+    def __init__(self, disk_path, jump_size):
         super().__init__(disk_path)
         self.jump_size = jump_size * SECTOR_SIZE
         self.inspections = []
@@ -159,7 +158,6 @@ class Job(QtCore.QObject):
     finished_signal = QtCore.pyqtSignal(bool)
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
-    executor_queue_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, vol, file, sector_size, start_at):
         super().__init__()
@@ -174,20 +172,15 @@ class Job(QtCore.QObject):
         self.finished = False
         self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
         os.makedirs(self.dir_name, mode=0o755)
-        self.loading_progress = 0
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.volume_size = disk_usage(vol + ':\\')
         self.start_at = start_at
         self.file = file
         self.done_sectors = 0
         self.total_sectors = len(file.remaining_sectors)
-        self.rebuilt_file = [None] * self.total_sectors
-
         jump_size = self.total_sectors // 2
         self.skim_reader = SkimReader(self.disk_path, jump_size)
-
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
-
 
     def test_run(self):
         def fake_fn(inp):
@@ -213,15 +206,14 @@ class Job(QtCore.QObject):
         self.skim_reader.read(self.start_at)
 
     class CloseInspection(QtCore.QObject):
-        def __init__(self, addr):
+        def __init__(self, address):
             super().__init__()
-            self.addr = addr
-            self.forward = CloseReader(addr)
-            self.backward = CloseReader(addr, True)
+            self.address = address
+            self.forward = CloseReader(self.address)
+            self.backward = CloseReader(self.address, True)
             job.skim_reader.inspections.append(self.forward)
             job.skim_reader.inspections.append(self.backward)
             job.skim_reader.new_inspection_signal.emit(self)
-
             threadpool.start(Worker(self.forward.read))
             threadpool.start(Worker(self.backward.read))
 
@@ -237,8 +229,6 @@ class Job(QtCore.QObject):
 
         fobj = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
         out_file = open(self.rebuilt_file_path, 'wb')
-        """ for addr, sector in self.rebuilt_file:
-            out_file.write(sector) """
         for addresses in job.file.address_table:
             fobj.seek(addresses[0])
             out_file.write(fobj.read(SECTOR_SIZE))
