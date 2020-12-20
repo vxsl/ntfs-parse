@@ -7,32 +7,51 @@ from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
 
 lock = Lock()
-executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
-executor_queue_signal = QtCore.pyqtSignal(int)
+#executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
+executor = QtCore.QThreadPool.globalInstance()
+executor.setMaxThreadCount(cpu_count() - 3)
+#executor_queue_signal = QtCore.pyqtSignal(int)
 
-def check_sector(inp, addr, close_reader=None):
-    try:
-        i = job.file.remaining_sectors.index(inp)
-        actual_address = addr - SECTOR_SIZE
-        job.file.address_table[i].append(actual_address)
-        job.file.remaining_sectors[i] = None
-        if len(job.file.address_table[i]) == 1:
-            job.success_signal.emit(i)
-        if close_reader:
-            close_reader.success_count += 1
-            close_reader.consecutive_successes += 1
-        elif not job.skim_reader.inspection_in_progress(addr):
-            job.CloseInspection(actual_address)
-        if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
-            and not job.finished:
-            with lock:
-                job.finish()
-    except ValueError:  # inp did not exist in job.file.remaining_sectors
-        if close_reader:
-            close_reader.consecutive_successes = 0
-    executor_queue_signal.emit(executor._work_queue.qsize())
-    return
+class Worker(QtCore.QRunnable):
 
+    def __init__(self, fn, *args):
+        super(Worker, self).__init__()
+
+        if not fn:
+            self.fn = self.check_sector 
+        else:
+            self.fn = fn
+        self.args = args
+
+    @QtCore.pyqtSlot()
+    def run(self):
+        self.fn(*self.args)
+
+    @QtCore.pyqtSlot()
+    def check_sector(self, inp, addr, close_reader=None):
+        #print(current_thread().getName())
+        #current_thread()
+        try:
+            i = job.file.remaining_sectors.index(inp)
+            actual_address = addr - SECTOR_SIZE
+            job.file.address_table[i].append(actual_address)
+            job.file.remaining_sectors[i] = None
+            if len(job.file.address_table[i]) == 1:
+                job.success_signal.emit(i)
+            if close_reader:
+                close_reader.success_count += 1
+                close_reader.consecutive_successes += 1
+            elif not job.skim_reader.inspection_in_progress(addr):
+                job.CloseInspection(actual_address)
+            if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
+                and not job.finished:
+                with lock:
+                    job.finish()
+        except ValueError:  # inp did not exist in job.file.remaining_sectors
+            if close_reader:
+                close_reader.consecutive_successes = 0
+        #executor_queue_signal.emit(executor._work_queue.qsize())
+        return
 
 class DiskReader(QtCore.QObject):
     def __init__(self, disk_path):
@@ -68,9 +87,11 @@ class CloseReader(DiskReader):
             if job.finished or not data:
                 break
             if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
-                executor.submit(check_sector, data, self.fobj.tell(), self)
+                #executor.submit(check_sector, data, self.fobj.tell(), self)
+                executor.start(Worker(None, data, self.fobj.tell(), self))
             self.sector_count += 1
-            executor.submit(self.emit_progress)
+            #executor.submit(self.emit_progress)
+            executor.start(Worker(self.emit_progress))
         with lock:
             job.skim_reader.perf.children.remove(self.perf)
             job.skim_reader.inspections.remove(self)
@@ -118,7 +139,8 @@ class SkimReader(DiskReader):
                 if self.inspections or job.finished or not data:
                     break
                 if data not in MEANINGLESS_SECTORS:
-                    executor.submit(check_sector, data, self.fobj.tell())
+                    #executor.submit(check_sector, data, self.fobj.tell())
+                    executor.start(Worker(None, data, self.fobj.tell()))
                 self.progress_signal.emit(self.perf.increment())
                 self.fobj.seek(self.jump_size, 1)
             if self.inspections and not job.finished:
@@ -183,7 +205,8 @@ class Job(QtCore.QObject):
         test_perf.start()
         for _ in range(test_perf.sample_size + 1):
             data = self.skim_reader.fobj.read(SECTOR_SIZE)
-            executor.submit(fake_fn, data)
+            #executor.submit(fake_fn, data)
+            executor.start(Worker(fake_fn, data))
             test_perf.increment()
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
@@ -205,8 +228,21 @@ class Job(QtCore.QObject):
             job.skim_reader.inspections.append(self.forward)
             job.skim_reader.inspections.append(self.backward)
             job.skim_reader.new_inspection_signal.emit(self)
-            executor.submit(self.forward.read)
-            executor.submit(self.backward.read)
+            #executor.submit(self.forward.read)
+            #executor.submit(self.backward.read)
+
+            executor.start(Worker(self.forward.read))
+            executor.start(Worker(self.backward.read))
+            executor.start(Worker(None, 'abc', 123456))
+            """ forward_thread = QtCore.QThread(parent=job)
+            self.forward.moveToThread(forward_thread)
+            forward_thread.started.connect(self.forward.read)
+            forward_thread.start()
+
+            backward_thread = QtCore.QThread(parent=job)
+            self.backward.moveToThread(backward_thread)
+            backward_thread.started.connect(self.backward.read)
+            backward_thread.start() """
 
     def finish(self):
 

@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job, executor_queue_signal
+from recreate_file import Job, Worker
 
 SECTOR_SIZE = 512
 window = None
@@ -91,6 +91,8 @@ class MainWindow(QWidget):
 
         super().__init__()
         self.setWindowTitle("recoverability")        
+
+        #QtCore.QThread.currentThread().setPriority(6)
 
         self.job = None
         
@@ -314,8 +316,9 @@ class MainWindow(QWidget):
         self.job_thread = QtCore.QThread()
         self.job = Job(self.selected_vol, self.file, SECTOR_SIZE, validated_start_address)
         self.job.moveToThread(self.job_thread)
+        #self.job_thread.setPriority(4)
 
-        executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
+        #executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
         self.job.perf_created_signal.connect(lambda: self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average))
@@ -328,6 +331,8 @@ class MainWindow(QWidget):
         
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
+
+        #QtCore.QThreadPool.globalInstance().start(Worker(self.job.run), 1)
 
     def loading_finished(self, data):
         self.inspection_sample_size = data[0]
