@@ -8,6 +8,7 @@ from performance import PerformanceCalculator, InspectionPerformanceCalc
 
 lock = Lock()
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
+executor_queue_signal = QtCore.pyqtSignal(int)
 
 def check_sector(inp, addr, close_reader=None):
     try:
@@ -26,11 +27,10 @@ def check_sector(inp, addr, close_reader=None):
             and not job.finished:
             with lock:
                 job.finish()
-        return
     except ValueError:  # inp did not exist in job.file.remaining_sectors
         if close_reader:
             close_reader.consecutive_successes = 0
-        return
+    executor_queue_signal.emit(executor._work_queue.qsize())
     return
 
 
@@ -52,14 +52,15 @@ class CloseReader(DiskReader):
         self.success_count = 0
         self.consecutive_successes = 0
         if backward:
-            self.id_str = "bkwd" + hex(start_at)
+            self.id_tuple = ("backward", start_at, hex(start_at))
+            self.start_at -= (self.sector_limit * SECTOR_SIZE)
         else:
-            self.id_str = "fwd" + hex(start_at)
-        self.perf = InspectionPerformanceCalc(self.sector_limit, self.id_str)
-        job.perf.children.append(self.perf)
+            self.id_tuple = ("forward", start_at, hex(start_at))
+        self.perf = InspectionPerformanceCalc(self.sector_limit, self.id_tuple[0] + self.id_tuple[2])
+        job.skim_reader.perf.children.append(self.perf)
 
     def read(self):
-        current_thread().name = self.id_str
+        current_thread().name = self.id_tuple[0] + self.id_tuple[2]
         self.fobj.seek(self.start_at)
         self.perf.start()
         for _ in range(self.sector_limit):
@@ -69,48 +70,31 @@ class CloseReader(DiskReader):
             if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
                 executor.submit(check_sector, data, self.fobj.tell(), self)
             self.sector_count += 1
-            executor.submit(self.perf.increment)
             executor.submit(self.emit_progress)
+        with lock:
+            job.skim_reader.perf.children.remove(self.perf)
+            job.skim_reader.inspections.remove(self)
+        self.finished_signal.emit()
+        current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
+        del self.perf
+        job.skim_reader.request_resume()
         return
 
     def emit_progress(self):
-        self.progress_signal.emit((self.sector_count, self.success_count))
-        job.executor_queue_signal.emit(executor._work_queue.qsize())
-
-class ForwardCloseReader(CloseReader):
-    def read(self):
-        super().read()
-        with lock:
-            job.perf.children.remove(self.perf)
-            job.skim_reader.inspections.remove((hex(self.start_at), self))
-        self.finished_signal.emit()
-        current_thread().name = ("Control returned from " + self.id_str)
-        job.skim_reader.request_resume()
-
-class BackwardCloseReader(CloseReader):
-    def __init__(self, start_at):
-        super(BackwardCloseReader, self).__init__(start_at, True)
-        self.start_at -= (self.sector_limit * SECTOR_SIZE)
-
-    def read(self):
-        super().read()
-        with lock:
-            job.perf.children.remove(self.perf)
-            job.skim_reader.inspections.remove((hex(self.start_at), self))
-        self.finished_signal.emit()
-        current_thread().name = ("Control returned from " + self.id_str)
-        job.skim_reader.request_resume()
+        self.perf.increment()
+        self.progress_signal.emit((self.sector_count, self.success_count))        
 
 class SkimReader(DiskReader):
 
-    resume_signal = QtCore.pyqtSignal()
+    new_inspection_signal = QtCore.pyqtSignal(object)
+    resumed_signal = QtCore.pyqtSignal()
+    progress_signal = QtCore.pyqtSignal(float)
 
     def __init__(self, disk_path, jump_size, **kwargs):
         super().__init__(disk_path)
         self.jump_size = jump_size * SECTOR_SIZE
         self.inspections = []
         self.resume_at = None
-        self.resume_signal.connect(self.request_resume)
         self.resuming_flag = False
 
     def request_resume(self):
@@ -121,11 +105,12 @@ class SkimReader(DiskReader):
                 return
             else:
                 self.read(self.resume_at) # only resume if all children are finished
+        self.resumed_signal.emit()
 
     def read(self, start_at):
         current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
-        job.perf.start()
+        self.perf.start()
 
         try:
             while True:
@@ -134,10 +119,8 @@ class SkimReader(DiskReader):
                     break
                 if data not in MEANINGLESS_SECTORS:
                     executor.submit(check_sector, data, self.fobj.tell())
-                executor.submit(job.perf.increment)
-                job.skim_progress_signal.emit()
+                self.progress_signal.emit(self.perf.increment())
                 self.fobj.seek(self.jump_size, 1)
-
             if self.inspections and not job.finished:
                 self.resume_at = self.fobj.tell()
                 self.resuming_flag = False
@@ -147,22 +130,19 @@ class SkimReader(DiskReader):
         #job.finished_signal.emit(False)
 
     def inspection_in_progress(self, addr):
-        for address, reader in self.inspections:
-            upper_limit = int(address, 16) + (reader.sector_limit * SECTOR_SIZE)
-            lower_limit = int(address, 16) - (reader.sector_limit * SECTOR_SIZE)
+        for reader in self.inspections:
+            upper_limit = reader.id_tuple[1] + (reader.sector_limit * SECTOR_SIZE)
+            lower_limit = reader.id_tuple[1] - (reader.sector_limit * SECTOR_SIZE)
             if lower_limit <= addr and addr <= upper_limit:
                 return True
         return False
 
 class Job(QtCore.QObject):
 
-    new_inspection_signal = QtCore.pyqtSignal(object)
     success_signal = QtCore.pyqtSignal(int)
     finished_signal = QtCore.pyqtSignal(bool)
-    skim_progress_signal = QtCore.pyqtSignal()
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
-    executor_queue_signal = QtCore.pyqtSignal(int)
     perf_created_signal = QtCore.pyqtSignal()
 
     def __init__(self, vol, file, sector_size, start_at):
@@ -184,7 +164,6 @@ class Job(QtCore.QObject):
         self.start_at = start_at
         self.file = file
         self.done_sectors = 0
-        self.perf = None
         self.total_sectors = len(file.remaining_sectors)
         self.rebuilt_file = [None] * self.total_sectors
 
@@ -213,7 +192,7 @@ class Job(QtCore.QObject):
 
     def run(self):        
         init_avg = self.test_run() * 10
-        self.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
+        self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
         self.perf_created_signal.emit()
         self.skim_reader.read(self.start_at)
 
@@ -221,11 +200,11 @@ class Job(QtCore.QObject):
         def __init__(self, addr):
             super().__init__()
             self.addr = addr
-            self.forward = ForwardCloseReader(addr)
-            self.backward = BackwardCloseReader(addr)
-            job.skim_reader.inspections.append((hex(self.addr), self.forward))
-            job.skim_reader.inspections.append((hex(self.addr), self.backward))
-            job.new_inspection_signal.emit(self)
+            self.forward = CloseReader(addr)
+            self.backward = CloseReader(addr, True)
+            job.skim_reader.inspections.append(self.forward)
+            job.skim_reader.inspections.append(self.backward)
+            job.skim_reader.new_inspection_signal.emit(self)
             executor.submit(self.forward.read)
             executor.submit(self.backward.read)
 

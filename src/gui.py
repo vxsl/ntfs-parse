@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job
+from recreate_file import Job, executor_queue_signal
 
 SECTOR_SIZE = 512
 window = None
@@ -56,9 +56,9 @@ class FinishedDialog(QMessageBox):
 
 class InspectionModel(QtCore.QObject):
 
-    def __init__(self, id_str, sector_limit, prefix, estimate_fn):
+    def __init__(self, id_tuple, sector_limit, prefix, estimate_fn):
         super().__init__()
-        self.id_str = id_str
+        self.id_str = id_tuple[0] + id_tuple[2]
         self.progress_bar = QProgressBar()
         self.label = QLabel(prefix)
         self.sector_limit = sector_limit
@@ -219,8 +219,8 @@ class MainWindow(QWidget):
         avg = data[0]
         estimate = data[1]
         self.sector_avg.setText("Average time to skim " \
-            + str(self.job.perf.sample_size * self.job.perf.jump_size) + " sectors (" \
-            + str(self.job.perf.sample_size * self.job.perf.jump_size * 512 / 1000000) \
+            + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size) + " sectors (" \
+            + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size * 512 / 1000000) \
             + " MB): {:.2f}".format(avg) + " seconds")
         self.time.setHMS(0,0,0)
         self.time = self.time.addSecs(estimate)
@@ -240,14 +240,14 @@ class MainWindow(QWidget):
             self.current_inspection_averages = {}
 
     def initialize_inspection_gui(self, inspection):
-        label_prefix = "Close inspection at " + hex(inspection.addr)
+        label_prefix = hex(inspection.addr)
         label = QLabel(label_prefix)
 
         inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
         inspection.backward.perf.new_average_signal.connect(self.new_inspection_average)
 
-        forward_gui = InspectionModel(inspection.forward.id_str, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
-        backward_gui = InspectionModel(inspection.backward.id_str, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
+        forward_gui = InspectionModel(inspection.forward.id_tuple, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
+        backward_gui = InspectionModel(inspection.backward.id_tuple, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
 
         bars = QHBoxLayout()
 
@@ -315,12 +315,13 @@ class MainWindow(QWidget):
         self.job = Job(self.selected_vol, self.file, SECTOR_SIZE, validated_start_address)
         self.job.moveToThread(self.job_thread)
 
-        self.job.success_signal.connect(self.visualize_file_progress)
-        self.job.new_inspection_signal.connect(self.initialize_inspection_gui)
+        executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
+        self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
-        self.job.skim_progress_signal.connect(self.skim_gui_update)
-        self.job.executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
-        self.job.perf_created_signal.connect(lambda: self.job.perf.new_average_signal.connect(self.new_skim_average))
+        self.job.perf_created_signal.connect(lambda: self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average))
+        self.job.skim_reader.resumed_signal.connect(self.resume_skim_gui)
+        self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
+        self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
 
         self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
         self.job.loading_complete_signal.connect(self.loading_finished)
@@ -339,7 +340,7 @@ class MainWindow(QWidget):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
         self.close()
 
-    def visualize_file_progress(self, i):
+    def file_gui_update(self, i):
         self.job.done_sectors += 1
         self.successes.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
@@ -347,9 +348,16 @@ class MainWindow(QWidget):
         + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
 
+    def resume_skim_gui(self):        
+        #self.inspections_vbox.setParent(None)
+        self.inspections_box.hide()
+        """ for i in reversed(range(self.inspections_vbox.count())): 
+            self.inspections_vbox.itemAt(i).widget().setParent(None) """
+
+        
     def skim_gui_update(self):
-        progress =  self.job.perf.sectors_read
-        percent = 100 * progress / self.job.perf.total_sectors_to_read
+        progress =  self.job.skim_reader.perf.sectors_read
+        percent = 100 * progress / self.job.skim_reader.perf.total_sectors_to_read
         self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
         

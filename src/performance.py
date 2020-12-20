@@ -47,6 +47,10 @@ class PerformanceCalculator(QtCore.QObject):
                 self.avg += (perf_counter() - self.cur_start)
             self.new_average_signal.emit((self.avg, self.get_remaining_seconds()))
             self.start()
+        return self.sectors_read / self.total_sectors_to_read
+
+    def get_read_percent(self):
+        return self.sectors_read / self.total_sectors_to_read
 
     def get_remaining_seconds(self):
         return (self.avg / (self.sample_size)) * \
