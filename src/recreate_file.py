@@ -87,7 +87,6 @@ class CloseReader(DiskReader):
             self.sector_count += 1
             threadpool.start(Worker(self.emit_progress))
             time.sleep(0.01)
-
         with lock:
             job.skim_reader.perf.children.remove(self.perf)
             job.skim_reader.inspections.remove(self)
@@ -96,6 +95,10 @@ class CloseReader(DiskReader):
         del self.perf
         job.skim_reader.request_resume()
         return
+
+    def emit_progress(self):	
+        self.perf.increment()	
+        self.progress_signal.emit((self.sector_count, self.success_count))        	
 
 class SkimReader(DiskReader):
 
