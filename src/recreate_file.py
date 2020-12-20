@@ -8,7 +8,6 @@ from performance import PerformanceCalculator, InspectionPerformanceCalc
 
 lock = Lock()
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
-executor_queue_signal = QtCore.pyqtSignal(int)
 
 def check_sector(inp, addr, close_reader=None):
     try:
@@ -30,7 +29,7 @@ def check_sector(inp, addr, close_reader=None):
     except ValueError:  # inp did not exist in job.file.remaining_sectors
         if close_reader:
             close_reader.consecutive_successes = 0
-    executor_queue_signal.emit(executor._work_queue.qsize())
+    job.executor_queue_signal.emit(executor._work_queue.qsize())
     return
 
 
@@ -144,6 +143,7 @@ class Job(QtCore.QObject):
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
     perf_created_signal = QtCore.pyqtSignal()
+    executor_queue_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, vol, file, sector_size, start_at):
         super().__init__()

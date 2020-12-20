@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import QFileDialog, QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job, executor_queue_signal
+from recreate_file import Job
 
 SECTOR_SIZE = 512
 window = None
@@ -315,7 +315,7 @@ class MainWindow(QWidget):
         self.job = Job(self.selected_vol, self.file, SECTOR_SIZE, validated_start_address)
         self.job.moveToThread(self.job_thread)
 
-        executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
+        self.job.executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
         self.job.perf_created_signal.connect(lambda: self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average))
