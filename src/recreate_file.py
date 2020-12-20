@@ -6,7 +6,6 @@ from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
 
-lock = Lock()
 executor = futures.ThreadPoolExecutor(max_workers=(cpu_count() - 3))
 
 def check_sector(inp, addr, close_reader=None):
@@ -24,8 +23,7 @@ def check_sector(inp, addr, close_reader=None):
             job.CloseInspection(actual_address)
         if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
             and not job.finished:
-            with lock:
-                job.finish()
+            job.finish()
     except ValueError:  # inp did not exist in job.file.remaining_sectors
         if close_reader:
             close_reader.consecutive_successes = 0
@@ -66,22 +64,19 @@ class CloseReader(DiskReader):
             data = self.fobj.read(SECTOR_SIZE)
             if job.finished or not data:
                 break
-            if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
+            if self.consecutive_successes > 2 or data not in MEANINGLESS_SECTORS:
                 executor.submit(check_sector, data, self.fobj.tell(), self)
             self.sector_count += 1
-            executor.submit(self.emit_progress)
-        with lock:
-            job.skim_reader.perf.children.remove(self.perf)
-            job.skim_reader.inspections.remove(self)
+            self.perf.increment()
+            self.progress_signal.emit((self.sector_count, self.success_count))
+            time.sleep(0.01)
+        job.skim_reader.perf.children.remove(self.perf)
+        job.skim_reader.inspections.remove(self)
         self.finished_signal.emit()
         current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
         del self.perf
         job.skim_reader.request_resume()
         return
-
-    def emit_progress(self):
-        self.perf.increment()
-        self.progress_signal.emit((self.sector_count, self.success_count))        
 
 class SkimReader(DiskReader):
 
