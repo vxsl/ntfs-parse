@@ -67,15 +67,13 @@ class InspectionModel(QtCore.QObject):
 
     @QtCore.pyqtSlot(tuple)
     def update(self, info):
-        sector_count = info[0]
-        success_count = info[1]
-        self.progress_bar.setValue(100 * sector_count / self.sector_limit)
+        self.progress_bar.setValue(100 * info[0] / self.sector_limit)
         if self.avg > 0:
-            self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
-                                + '\n' + '{:.4f}'.format(100 * success_count / sector_count) \
+            self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
+                                + '\n' + '{:.4f}'.format(100 * info[1] / info[0]) \
                                 + "% success")
         else:
-            self.label.setText(str(sector_count) + '/' + str(self.sector_limit) \
+            self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
                                 + '\n...\n...')
 
     def finish(self):
@@ -140,10 +138,9 @@ class MainWindow(QWidget):
 
         #self.main_clock = QtCore.QTimer(self)
         self.time_remaining = QLabel()
-        self.time = QtCore.QTime(0, 1, 0)
+        self.time = QtCore.QTime(0, 0, 0)
         self.main_clock = QtCore.QTimer(self)
         self.main_clock.timeout.connect(self.render_main_clock)
-        #self.main_clock.timeout.connect(lambda: self.main_clock.setText)
 
         grid = QGridLayout()
         grid.addWidget(self.file_info_box, 0, 0)
@@ -180,6 +177,7 @@ class MainWindow(QWidget):
 
         self.setLayout(grid)
 
+        #QtCore.QThread.currentThread().setPriority(6)
         current_thread().name = "MAIN GUI THREAD"
 
     def display_current_skim_address(self):
@@ -321,7 +319,6 @@ class MainWindow(QWidget):
         #executor_queue_signal.connect(lambda num: self.executor_queue.setText(str(num) + " sectors in the queue"))
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
-        self.job.perf_created_signal.connect(lambda: self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average))
         self.job.skim_reader.resumed_signal.connect(self.resume_skim_gui)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
@@ -330,11 +327,13 @@ class MainWindow(QWidget):
         self.job.loading_complete_signal.connect(self.loading_finished)
         
         self.job_thread.started.connect(self.job.run)
+        #self.job_thread.setPriority(5)
         self.job_thread.start()
 
         #QtCore.QThreadPool.globalInstance().start(Worker(self.job.run), 1)
 
     def loading_finished(self, data):
+        self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
         self.inspection_sample_size = data[0]
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)

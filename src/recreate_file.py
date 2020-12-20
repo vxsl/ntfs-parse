@@ -97,10 +97,6 @@ class CloseReader(DiskReader):
         job.skim_reader.request_resume()
         return
 
-    def emit_progress(self):
-        self.perf.increment()
-        self.progress_signal.emit((self.sector_count, self.success_count))        
-
 class SkimReader(DiskReader):
 
     new_inspection_signal = QtCore.pyqtSignal(object)
@@ -160,7 +156,7 @@ class Job(QtCore.QObject):
     finished_signal = QtCore.pyqtSignal(bool)
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
-    perf_created_signal = QtCore.pyqtSignal()
+    executor_queue_signal = QtCore.pyqtSignal(int)
 
     def __init__(self, vol, file, sector_size, start_at):
         super().__init__()
@@ -204,13 +200,13 @@ class Job(QtCore.QObject):
             test_perf.increment()
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
-        self.loading_complete_signal.emit((insp_sample_size, (test_perf.avg, test_perf.get_remaining_seconds())))
-        return test_perf.avg
+        return (insp_sample_size, (test_perf.avg, test_perf.get_remaining_seconds()))
 
     def run(self):        
-        init_avg = self.test_run() * 10
+        test_results = self.test_run()
+        init_avg = test_results[1][0]
         self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
-        self.perf_created_signal.emit()
+        self.loading_complete_signal.emit(test_results)
         self.skim_reader.read(self.start_at)
 
     class CloseInspection(QtCore.QObject):
