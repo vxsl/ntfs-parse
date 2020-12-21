@@ -89,6 +89,9 @@ class CloseReader(DiskReader):
         with lock:
             job.skim_reader.perf.children.remove(self.perf)
             job.skim_reader.inspections.remove(self)
+        if not data:
+            job.finished = True
+            job.finished_signal.emit(False)
         self.finished_signal.emit()
         current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
         del self.perf
@@ -105,12 +108,13 @@ class SkimReader(DiskReader):
     resumed_signal = QtCore.pyqtSignal()
     progress_signal = QtCore.pyqtSignal(float)
 
-    def __init__(self, disk_path, jump_size):
+    def __init__(self, disk_path, jump_size, init_address):
         super().__init__(disk_path)
         self.jump_size = jump_size * SECTOR_SIZE
         self.inspections = []
         self.resume_at = None
         self.resuming_flag = False
+        self.init_address = init_address
 
     def request_resume(self):
         if not self.resuming_flag:
@@ -122,27 +126,27 @@ class SkimReader(DiskReader):
                 self.read(self.resume_at) # only resume if all children are finished
         self.resumed_signal.emit()
 
-    def read(self, start_at):
+    def read(self, start_at=None):
+        if not start_at:
+            start_at = self.init_address 
         current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
         self.perf.start()
-
-        try:
-            while True:
-                data = self.fobj.read(SECTOR_SIZE)
-                if self.inspections or job.finished or not data:
-                    break
-                if data not in MEANINGLESS_SECTORS:
-                    threadpool.start(Worker(None, data, self.fobj.tell()))
-                self.progress_signal.emit(self.perf.increment())
-                self.fobj.seek(self.jump_size, 1)
-            if self.inspections and not job.finished:
-                self.resume_at = self.fobj.tell()
-                self.resuming_flag = False
-        except: # TODO what type of exception is raised when fd reads past EOF?
-            pass
+        while True:
+            data = self.fobj.read(SECTOR_SIZE)
+            if self.inspections or job.finished or not data:
+                break
+            if data not in MEANINGLESS_SECTORS:
+                threadpool.start(Worker(None, data, self.fobj.tell()))
+            self.progress_signal.emit(self.perf.increment())
+            self.fobj.seek(self.jump_size, 1)
+        if self.inspections and not job.finished:
+            self.resume_at = self.fobj.tell()
+            self.resuming_flag = False
+        if not data:
+            job.finished = True
+            job.finished_signal.emit(False)
         current_thread().name = "Control returned from skim thread"
-        #job.finished_signal.emit(False)
 
     def inspection_in_progress(self, addr):
         for reader in self.inspections:
@@ -159,7 +163,7 @@ class Job(QtCore.QObject):
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
 
-    def __init__(self, vol, file, sector_size, start_at):
+    def __init__(self, vol, file, sector_size, init_address):
         super().__init__()
 
         global SECTOR_SIZE
@@ -174,12 +178,11 @@ class Job(QtCore.QObject):
         os.makedirs(self.dir_name, mode=0o755)
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.volume_size = disk_usage(vol + ':\\')
-        self.start_at = start_at
         self.file = file
         self.done_sectors = 0
         self.total_sectors = len(file.remaining_sectors)
         jump_size = self.total_sectors // 2
-        self.skim_reader = SkimReader(self.disk_path, jump_size)
+        self.skim_reader = SkimReader(self.disk_path, jump_size, init_address)
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
 
     def test_run(self):
@@ -203,7 +206,7 @@ class Job(QtCore.QObject):
         init_avg = test_results[1][0]
         self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
         self.loading_complete_signal.emit(test_results)
-        self.skim_reader.read(self.start_at)
+        self.skim_reader.read()
 
     class CloseInspection(QtCore.QObject):
         def __init__(self, address):
