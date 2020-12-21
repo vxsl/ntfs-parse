@@ -59,7 +59,14 @@ while True:
     selected_vol = disk_select.vol_select_dropdown.currentText()[0]
     file_select.exec()
     path = file_select.selectedFiles()[0]
-    if path.split(":")[0] == selected_vol:
+    if os.stat(path).st_size > 100000000:
+        error = QMessageBox()
+        error.setWindowTitle('recoverability')
+        error.setIcon(QMessageBox.Warning)
+        error.setText('Please select a file under 100 MB. Searching for large files is not yet implemented.')
+        error.setStandardButtons(QMessageBox.Ok)
+        error.exec()
+    elif path.split(":")[0] == selected_vol:
         error = QMessageBox()
         error.setWindowTitle('recoverability')
         error.setIcon(QMessageBox.Warning)
