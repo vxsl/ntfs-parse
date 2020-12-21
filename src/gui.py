@@ -10,10 +10,7 @@ from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job
-
-SECTOR_SIZE = 512
-window = None
+from recreate_file import Job, SECTOR_SIZE
 
 class SourceFile():
     def __init__(self, path):
@@ -309,7 +306,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
         self.job_thread = QtCore.QThread()
-        self.job = Job(self.selected_vol, self.file, SECTOR_SIZE, validated_start_address)
+        self.job = Job(self.selected_vol, self.file, validated_start_address)
         self.job.moveToThread(self.job_thread)
 
         self.job.success_signal.connect(self.file_gui_update)
