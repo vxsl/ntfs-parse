@@ -162,6 +162,7 @@ class MainWindow(QWidget):
         self.inspections_box = QGroupBox("Close inspections")
         self.inspections_vbox = QVBoxLayout()
         self.inspections_box.setLayout(self.inspections_vbox)
+        self.inspections_box.hide()
         grid.addWidget(self.inspections_box, 5, 0, 1, 3)
 
         grid.addWidget(self.successes, 0, 2)
@@ -263,7 +264,7 @@ class MainWindow(QWidget):
 
         self.inspections_vbox.addWidget(label)
         self.inspections_vbox.addLayout(bars)
-        self.inspections_box.setLayout(self.inspections_vbox)
+        self.inspections_box.show()
 
         self.current_inspections[forward_gui.id_str] = forward_gui
         self.current_inspections[backward_gui.id_str] = backward_gui
@@ -313,7 +314,7 @@ class MainWindow(QWidget):
 
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
-        self.job.skim_reader.resumed_signal.connect(self.inspections_box.hide)
+        self.job.skim_reader.resumed_signal.connect(self.clean_up_inspection_gui)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
 
@@ -323,7 +324,13 @@ class MainWindow(QWidget):
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
 
-        #QtCore.QThreadPool.globalInstance().start(Worker(self.job.run), 1)
+    def clean_up_inspection_gui(self):
+        for i in reversed(range(self.inspections_vbox.count())): 
+            try:
+                self.inspections_vbox.itemAt(i).widget().setParent(None)
+            except AttributeError:
+                pass
+        self.inspections_box.hide()
 
     def loading_finished(self, data):
         self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
