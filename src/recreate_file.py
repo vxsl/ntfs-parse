@@ -193,7 +193,7 @@ class Job(QtCore.QObject):
         job = self
 
         self.finished = False
-        self.dir_name = 'ntfs-toolbox/' + 'recreate_file ' + time.ctime().replace(":", '_')
+        self.dir_name = 'recoverability/' + time.ctime().replace(":", '_')
         os.makedirs(self.dir_name, mode=0o755)
         self.disk_path = r"\\." + "\\" + vol + ":"
         self.volume_size = disk_usage(vol + ':\\')
@@ -202,7 +202,7 @@ class Job(QtCore.QObject):
         self.total_sectors = len(file.remaining_sectors)
         jump_size = self.total_sectors // 2
         self.skim_reader = SkimReader(self.disk_path, jump_size, init_address)
-        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + "_RECONSTRUCTED." + self.file.name.split('.')[1]
+        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using data from " + vol + "]" + self.file.name.split('.')[1]
 
     def test_run(self):
         def fake_fn(inp):
