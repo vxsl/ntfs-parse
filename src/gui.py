@@ -143,7 +143,7 @@ class MainWindow(QWidget):
         self.start_button.clicked.connect(self.start)
 
         self.init_address_input = QLineEdit()
-        self.init_address_input.setPlaceholderText('Address at which to begin search (default: 0x0000000000)')
+        self.init_address_input.setPlaceholderText('Begin at address (default 0x0000000000)')
         init_address_hbox = QHBoxLayout()
         init_address_hbox.addWidget(self.init_address_input)
 
@@ -195,16 +195,19 @@ class MainWindow(QWidget):
             self.time_label.setText(the_time + " remaining in skim")
             
     def closeEvent(self, event):
+        if hasattr(self, 'job'):
         if not self.job.finished:
             reply = QMessageBox.question(self, 'Window Close', 'Searching is not finished. Are you sure you want to close the window?',
                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
             if reply == QMessageBox.Yes:
                 event.accept()
-                print('Window closed')
                 sys.exit()
             else:
                 event.ignore()
+        else:
+            event.accept()
+            sys.exit()
 
     def new_skim_average(self, data):
         avg = data[0]
@@ -384,7 +387,7 @@ class MainWindow(QWidget):
         self.clock.start(1000)
 
     def finished(self, success):
-        FinishedDialog(success, self.job.rebuilt_file_path).exec()
+        FinishedDialog(success, self.job.rebuilt_file_path, (self.job.done_sectors / self.job.total_sectors)).exec()
         self.close()
 
     def file_gui_update(self, i):
