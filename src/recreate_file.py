@@ -89,13 +89,15 @@ class CloseReader(DiskReader):
         with lock:
             job.skim_reader.perf.children.remove(self.perf)
             job.skim_reader.inspections.remove(self)
-        if not data:
-            job.finished = True
-            job.finished_signal.emit(False)
         self.finished_signal.emit()
         current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
         del self.perf
-        job.skim_reader.request_resume()
+
+        if not data:
+            job.skim_reader.decide_if_finished(True)
+        else:
+            job.skim_reader.request_resume()
+            
         return
 
     def emit_progress(self):	
@@ -115,6 +117,7 @@ class SkimReader(DiskReader):
         self.resume_at = None
         self.resuming_flag = False
         self.init_address = init_address
+        self.second_pass = False
 
     def request_resume(self):
         if not self.resuming_flag:
@@ -125,16 +128,27 @@ class SkimReader(DiskReader):
             else:
                 self.read(self.resume_at) # only resume if all children are finished
         self.resumed_signal.emit()
+    
+    def decide_if_finished(self, eof):
+        if self.inspections:
+            return
+        if eof and self.init_address != 0:
+            self.second_pass = True
+            self.read(0)
+        elif eof or (self.fobj.tell() > self.init_address and self.second_pass):
+            job.finished = True
+            job.finished_signal.emit(False)
 
     def read(self, start_at=None):
-        if not start_at:
+        if start_at is None:
             start_at = self.init_address 
         current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
         self.perf.start()
         while True:
             data = self.fobj.read(SECTOR_SIZE)
-            if self.inspections or job.finished or not data:
+            if self.inspections or job.finished or not data \
+                or (self.fobj.tell() > self.init_address and self.second_pass):
                 break
             if data not in MEANINGLESS_SECTORS:
                 threadpool.start(Worker(None, data, self.fobj.tell()))
@@ -143,9 +157,10 @@ class SkimReader(DiskReader):
         if self.inspections and not job.finished:
             self.resume_at = self.fobj.tell()
             self.resuming_flag = False
-        if not data:
-            job.finished = True
-            job.finished_signal.emit(False)
+
+        if not data or (self.fobj.tell() > self.init_address and self.second_pass):
+            self.decide_if_finished(True)
+            
         current_thread().name = "Control returned from skim thread"
 
     def inspection_in_progress(self, addr):
