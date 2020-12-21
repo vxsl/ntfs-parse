@@ -129,8 +129,8 @@ class SkimReader(DiskReader):
                 self.resuming_flag = False
                 return
             else:
+                self.resumed_signal.emit()
                 self.read(self.resume_at) # only resume if all children are finished
-        self.resumed_signal.emit()
     
     def handle_eof(self):
         if self.inspections:
