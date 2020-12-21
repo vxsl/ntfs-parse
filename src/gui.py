@@ -93,27 +93,33 @@ class MainWindow(QWidget):
         file_info.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
         file_info_box.setLayout(file_info)
         
-        self.init_address_input = QLineEdit()
-        self.init_address_input.setPlaceholderText('0x0000000000')
-        init_address_hbox = QHBoxLayout()
-        init_address_label = QLabel("Start at address (search forward): ")
-        init_address_hbox.addWidget(init_address_label)
-        init_address_hbox.addWidget(self.init_address_input)
+        rebuilt_file_group_box = QGroupBox("Reconstructed file")
+        rebuilt_file_hbox = QHBoxLayout()
+        self.rebuilt_file_info = QLabel()
+        self.rebuilt_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.rebuilt_file_info.setText("0/" + (str(len(self.file.remaining_sectors))))
+        rebuilt_file_hbox.addWidget(self.rebuilt_file_info)
+        rebuilt_file_group_box.setLayout(rebuilt_file_hbox)
 
-        self.successes = QLabel()
-        self.successes.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.successes.setText("0/" + (str(len(self.file.remaining_sectors))))
+        files_hbox = QHBoxLayout()
+        files_hbox.addWidget(file_info_box)
+        files_hbox.addWidget(rebuilt_file_group_box)
 
+        skim_group_box = QGroupBox("Skim")
+        skim_grid = QGridLayout()
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
         self.skim_percentage = QLabel()
-        self.sector_average = QLabel()
-
+        self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
         self.skim_address_button = QPushButton('Display current address in skim')
         self.skim_address_button.clicked.connect(self.display_current_skim_address)
+        skim_grid.addWidget(self.skim_progress_bar, 0, 0, 1, 3)
+        skim_grid.addWidget(self.skim_percentage, 1, 2)
+        skim_grid.addWidget(self.skim_address_button, 1, 0)
+        skim_group_box.setLayout(skim_grid)
 
-        self.start_button = QPushButton('Start')
-        self.start_button.clicked.connect(self.start)
+        self.sector_average = QLabel()
+
 
         self.time = QtCore.QTime(0, 0, 0)
         self.time_label = QLabel()
@@ -131,28 +137,45 @@ class MainWindow(QWidget):
         self.inspections_box.setLayout(self.inspections_vbox)
         self.inspections_box.hide()
 
-        self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.sector_average.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.time_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        start_hbox = QHBoxLayout()
+
+        self.start_button = QPushButton('Start')
+        self.start_button.clicked.connect(self.start)
+
+        self.init_address_input = QLineEdit()
+        self.init_address_input.setPlaceholderText('Address at which to begin search (default: 0x0000000000)')
+        init_address_hbox = QHBoxLayout()
+        init_address_hbox.addWidget(self.init_address_input)
+
+        start_hbox.addLayout(init_address_hbox)
+        start_hbox.addWidget(self.start_button)
+
+        #self.sector_average.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        #self.time_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
 
         grid = QGridLayout()
-        grid.addWidget(self.time_label, 8, 2)
-        grid.addWidget(self.sector_average, 9, 2)
-        grid.addWidget(self.skim_percentage, 6, 2)
-        grid.addWidget(file_info_box, 0, 0)
-        grid.addWidget(self.inspections_box, 5, 0, 1, 3)
-        grid.addWidget(self.successes, 0, 2)
-        grid.addWidget(self.skim_address_button, 7, 2)
-        grid.addWidget(self.skim_progress_bar, 4, 0, 1, 3)
-        grid.addWidget(self.start_button, 9, 0)
-        grid.addLayout(init_address_hbox, 10, 0)
+        grid.setSpacing(50)
+        grid.setContentsMargins(50, 50, 50, 50)
+        
+        grid.addLayout(files_hbox, 0, 0) 
+        grid.addWidget(skim_group_box, 4, 0)
+        grid.addWidget(self.inspections_box, 5, 0)
+        grid.addWidget(self.sector_average, 7, 0)
+        grid.addWidget(self.time_label, 8, 0)
+
+        grid.addLayout(start_hbox, 9, 0)
+
         self.setLayout(grid)
 
     def display_current_skim_address(self):
+        if hasattr(self, 'job'):
         if not self.current_inspections:
             self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()))
         else:
             self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
+        else:
+            self.skim_address_button.setText("Skim has not been started.")
+        QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText('Display current address in skim'))
 
     def draw_clock(self):
         if self.current_inspections:
@@ -318,7 +341,8 @@ class MainWindow(QWidget):
         
         user_input = self.init_address_input.text()
         if not user_input:
-            user_input = '0'
+            self.init_address_input.setText('0x00000000')
+            user_input = self.init_address_input.text()
         validated_start_address = self.validate_hex(user_input)
         if validated_start_address is None:
             self.invalid_address(user_input)
@@ -364,7 +388,7 @@ class MainWindow(QWidget):
         self.close()
 
     def file_gui_update(self, i):
-        self.successes.setText(("Last match: sector " + str(i) + "\n\n") \
+        self.rebuilt_file_info.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
         + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
         + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
