@@ -8,7 +8,6 @@ from performance import PerformanceCalculator, InspectionPerformanceCalc
 SECTOR_SIZE = 512
 MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
 
-lock = Lock()
 threadpool = QtCore.QThreadPool.globalInstance()
 threadpool.setMaxThreadCount(cpu_count() - 3)
 
@@ -44,8 +43,7 @@ class Worker(QtCore.QRunnable):
                 job.CloseInspection(actual_address)
             if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
                 and not job.finished:
-                with lock:
-                    job.finish()
+                job.finish()
         except ValueError:  # inp did not exist in job.file.remaining_sectors
             if close_reader:
                 close_reader.consecutive_successes = 0
@@ -89,9 +87,8 @@ class CloseReader(DiskReader):
             self.sector_count += 1
             threadpool.start(Worker(self.emit_progress))
             time.sleep(0.01)
-        with lock:
-            job.skim_reader.perf.children.remove(self.perf)
-            job.skim_reader.inspections.remove(self)
+        job.skim_reader.perf.children.remove(self.perf)
+        job.skim_reader.inspections.remove(self)
         self.finished_signal.emit()
         current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
         del self.perf
