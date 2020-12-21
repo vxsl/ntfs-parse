@@ -5,6 +5,9 @@ from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
 
+SECTOR_SIZE = 512
+MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
+
 lock = Lock()
 threadpool = QtCore.QThreadPool.globalInstance()
 threadpool.setMaxThreadCount(cpu_count() - 3)
@@ -61,7 +64,7 @@ class CloseReader(DiskReader):
     def __init__(self, start_at, backward=False):
         super().__init__(job.disk_path)
         self.start_at = start_at
-        self.sector_limit = job.total_sectors #???
+        self.sector_limit = job.total_sectors 
         self.sector_count = 0
         self.success_count = 0
         self.consecutive_successes = 0
@@ -181,13 +184,9 @@ class Job(QtCore.QObject):
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
 
-    def __init__(self, vol, file, sector_size, init_address):
+    def __init__(self, vol, file, init_address):
         super().__init__()
 
-        global SECTOR_SIZE
-        SECTOR_SIZE = sector_size
-        global MEANINGLESS_SECTORS
-        MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
         global job
         job = self
 
