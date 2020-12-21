@@ -63,8 +63,7 @@ class CloseReader(DiskReader):
     def __init__(self, start_at, backward=False):
         super().__init__(job.disk_path)
         self.start_at = start_at
-        #self.sector_limit = job.total_sectors // 2
-        self.sector_limit = 20
+        self.sector_limit = job.total_sectors // 2
         self.sector_count = 0
         self.success_count = 0
         self.consecutive_successes = 0
@@ -128,9 +127,9 @@ class SkimReader(DiskReader):
     resumed_signal = QtCore.pyqtSignal()
     progress_signal = QtCore.pyqtSignal(float)
 
-    def __init__(self, disk_path, jump_size, init_address):
+    def __init__(self, disk_path, jump_sectors, init_address):
         super().__init__(disk_path)
-        self.jump_size = jump_size * SECTOR_SIZE
+        self.jump_size = jump_sectors * SECTOR_SIZE
         self.inspections = []
         self.resume_at = None
         self.init_address = init_address
@@ -215,7 +214,7 @@ class Job(QtCore.QObject):
         self.total_sectors = len(file.remaining_sectors)
         jump_size = self.total_sectors // 2
         self.skim_reader = SkimReader(self.disk_path, jump_size, init_address)
-        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using data from " + vol + "]" + self.file.name.split('.')[1]
+        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using data from " + vol + "]." + self.file.name.split('.')[1]
 
     def test_run(self):
 
