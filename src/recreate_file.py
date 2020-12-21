@@ -94,7 +94,7 @@ class CloseReader(DiskReader):
         del self.perf
 
         if not data:
-            job.skim_reader.decide_if_finished(True)
+            job.skim_reader.handle_eof()
         else:
             job.skim_reader.request_resume()
             
@@ -129,15 +129,15 @@ class SkimReader(DiskReader):
                 self.read(self.resume_at) # only resume if all children are finished
         self.resumed_signal.emit()
     
-    def decide_if_finished(self, eof):
+    def handle_eof(self):
         if self.inspections:
             return
-        if eof and self.init_address != 0:
-            self.second_pass = True
-            self.read(0)
-        elif eof or (self.fobj.tell() > self.init_address and self.second_pass):
+        if self.init_address == 0:
             job.finished = True
             job.finished_signal.emit(False)
+        else:
+            self.second_pass = True
+            self.read(0)
 
     def read(self, start_at=None):
         if start_at is None:
@@ -158,9 +158,12 @@ class SkimReader(DiskReader):
             self.resume_at = self.fobj.tell()
             self.resuming_flag = False
 
-        if not data or (self.fobj.tell() > self.init_address and self.second_pass):
-            self.decide_if_finished(True)
-            
+        if not data:
+            self.handle_eof()
+        elif (self.fobj.tell() > self.init_address) and self.second_pass:
+            job.finished = True
+            job.finished_signal.emit(False)
+
         current_thread().name = "Control returned from skim thread"
 
     def inspection_in_progress(self, addr):
