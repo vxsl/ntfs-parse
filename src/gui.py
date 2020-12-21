@@ -51,6 +51,9 @@ class InspectionModel(QtCore.QObject):
 
     def __init__(self, id_tuple, sector_limit, prefix, estimate_fn):
         super().__init__()
+        self.address = id_tuple[2]
+        self.finished = False
+        self.sibling = None
         self.id_str = id_tuple[0] + id_tuple[2]
         self.progress_bar = QProgressBar()
         self.label = QLabel(prefix)
@@ -115,6 +118,7 @@ class MainWindow(QWidget):
         self.clock = QtCore.QTimer(self)
         self.clock.timeout.connect(self.draw_clock)
 
+        self.inspection_labels = {}
         self.current_inspections = {}
         self.current_inspection_averages = {}
         self.current_slowest_inspection = None
@@ -156,7 +160,7 @@ class MainWindow(QWidget):
                 self.time_label.setText("Average time to parse " \
                     + str(len(self.current_inspections) * self.inspection_sample_size) \
                     + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
-                    + " s\n" + the_time + " remaining to finish all close inspections.\n")
+                    + " s\n" + the_time + " remaining to finish current close inspections.\n")
             else:
                 self.time_label.setText(self.time.toString("h:mm:ss") + \
                     " remaining in skim (paused)... calculating time remaining in close inspection(s).")
@@ -203,13 +207,16 @@ class MainWindow(QWidget):
 
     def initialize_inspection_gui(self, inspection):
         label_prefix = hex(inspection.address)
-        label = QLabel(label_prefix)
+        self.inspection_labels[label_prefix] = QLabel(label_prefix)
 
         inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
         inspection.backward.perf.new_average_signal.connect(self.new_inspection_average)
 
         forward_gui = InspectionModel(inspection.forward.id_tuple, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
         backward_gui = InspectionModel(inspection.backward.id_tuple, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
+
+        forward_gui.sibling = backward_gui
+        backward_gui.sibling = forward_gui
 
         bars = QHBoxLayout()
 
@@ -227,7 +234,7 @@ class MainWindow(QWidget):
         box.addWidget(backward_gui.label)
         bars.addLayout(box)
 
-        self.inspections_vbox.addWidget(label)
+        self.inspections_vbox.addWidget(self.inspection_labels[label_prefix])
         self.inspections_vbox.addLayout(bars)
 
         self.inspections_box.show()
@@ -238,12 +245,18 @@ class MainWindow(QWidget):
         inspection.forward.progress_signal.connect(forward_gui.update)
         inspection.backward.progress_signal.connect(backward_gui.update)
 
-        inspection.forward.finished_signal.connect(lambda: self.finish_inspection(forward_gui))
-        inspection.backward.finished_signal.connect(lambda: self.finish_inspection(backward_gui))
+        inspection.forward.finished_signal.connect(lambda success_rate: self.finish_inspection(forward_gui, success_rate))
+        inspection.backward.finished_signal.connect(lambda success_rate: self.finish_inspection(backward_gui, success_rate))
 
-    def finish_inspection(self, reader):
+    def finish_inspection(self, reader, success_rate):
+        reader.success_rate = success_rate
+        reader.finished = True
         reader.progress_bar.setParent(None)
         reader.label.setParent(None)
+        if reader.sibling.finished:
+            overall_success_rate = (reader.success_rate + reader.sibling.success_rate) / 2
+            text = self.inspection_labels[reader.address].text()
+            self.inspection_labels[reader.address].setText(text + " [" + "{:.2f}".format(overall_success_rate * 100) + "% success]")
         del self.current_inspections[reader.id_str]
 
     def invalid_address(self, invalid_input):

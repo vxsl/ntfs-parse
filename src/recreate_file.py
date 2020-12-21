@@ -57,12 +57,12 @@ class DiskReader(QtCore.QObject):
 class CloseReader(DiskReader):
 
     progress_signal = QtCore.pyqtSignal(tuple)
-    finished_signal = QtCore.pyqtSignal()
+    finished_signal = QtCore.pyqtSignal(float)
 
     def __init__(self, start_at, backward=False):
         super().__init__(job.disk_path)
         self.start_at = start_at
-        self.sector_limit = job.total_sectors 
+        self.sector_limit = job.total_sectors // 2
         self.sector_count = 0
         self.success_count = 0
         self.consecutive_successes = 0
@@ -87,16 +87,20 @@ class CloseReader(DiskReader):
             self.sector_count += 1
             threadpool.start(Worker(self.emit_progress))
             time.sleep(0.01)
-        job.skim_reader.perf.children.remove(self.perf)
-        job.skim_reader.inspections.remove(self)
-        self.finished_signal.emit()
-        current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
-        del self.perf
 
         if not data:
             job.skim_reader.handle_eof()
         else:
             job.skim_reader.request_resume()
+
+        if self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.5:
+            job.CloseInspection(self.fobj.tell() + (self.sector_limit * SECTOR_SIZE))
+
+        job.skim_reader.perf.children.remove(self.perf)
+        job.skim_reader.inspections.remove(self)
+        self.finished_signal.emit(self.success_count / self.sector_count)
+        current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
+        del self.perf
             
         return
 
