@@ -91,6 +91,9 @@ class CloseReader(DiskReader):
             threadpool.start(Worker(self.emit_progress))
             time.sleep(0.01)
 
+        if job.finished:
+            return
+
         inspection_manipulation_mutex.acquire()
         job.skim_reader.inspections.remove(self)
         inspection_manipulation_mutex.release()
@@ -167,7 +170,10 @@ class SkimReader(DiskReader):
                 threadpool.start(Worker(None, data, self.fobj.tell()))
             self.progress_signal.emit(self.perf.increment())
             self.fobj.seek(self.jump_size, 1)
-        if self.inspections and not job.finished:
+
+        if job.finished:
+            return
+        elif self.inspections:
             self.resume_at = self.fobj.tell()
 
         if not data:
