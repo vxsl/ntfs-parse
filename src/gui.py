@@ -36,7 +36,6 @@ class SourceFile():
                 (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
         return result
 
-
 class FinishedDialog(QMessageBox):
     def __init__(self, success, path):
         super().__init__()
@@ -44,12 +43,9 @@ class FinishedDialog(QMessageBox):
         self.setIcon(QMessageBox.Warning)
         if success:
             self.setText('Finished: output written to ' + path)
-            #TODO display diff of original vs rebuilt
         else:
-            self.setText('Unsuccessful.')
-            #TODO not sure what to do here
+            self.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable.')
         self.setStandardButtons(QMessageBox.Ok)
-
 
 class InspectionModel(QtCore.QObject):
 
@@ -73,28 +69,16 @@ class InspectionModel(QtCore.QObject):
             self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
                                 + '\n...\n...')
 
-    def finish(self):
-        self.progress_bar.setParent(None)
-        self.label.setParent(None)
-        del window.current_inspections[self.id_str]
-
 class MainWindow(QWidget):
     def __init__(self, selected_vol, path):
-        # TODO remove useless attribute assignments
-        global window
-        window = self
-
         super().__init__()
-        self.setWindowTitle("recoverability")        
+        self.setWindowTitle("recoverability")            
+        current_thread().name = "GUI thread"  
 
-        #QtCore.QThread.currentThread().setPriority(6)
-
-        self.job = None
-        
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
 
-        self.file_info_box = QGroupBox("Source file")
+        file_info_box = QGroupBox("Source file")
         file_info = QGridLayout()
         file_info.addWidget(QLabel('Name:'), 0, 0)
         file_info.addWidget(QLabel(self.file.name), 0, 1)
@@ -102,19 +86,14 @@ class MainWindow(QWidget):
         file_info.addWidget(QLabel(self.file.dir), 1, 1)
         file_info.addWidget(QLabel('Size:'), 2, 0)
         file_info.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
-        self.file_info_box.setLayout(file_info)
+        file_info_box.setLayout(file_info)
         
-        self.start_at = QLineEdit()
-        self.start_at.setText('0')
-        self.start_at.setText('0x9b4d70800')
-        #self.start_at.setText('0x404A8A99000')
-        #self.start_at.setText('0x404c91a1800')
-        #self.start_at.setText('0x4191FFA4800')
-        #self.start_at.setText('0xaea3d9fe000')
-        start_at_hbox = QHBoxLayout()
-        start_at_label = QLabel("Start at address (search forward): ")
-        start_at_hbox.addWidget(start_at_label)
-        start_at_hbox.addWidget(self.start_at)
+        self.init_address_input = QLineEdit()
+        self.init_address_input.setPlaceholderText('0x0000000000')
+        init_address_hbox = QHBoxLayout()
+        init_address_label = QLabel("Start at address (search forward): ")
+        init_address_hbox.addWidget(init_address_label)
+        init_address_hbox.addWidget(self.init_address_input)
 
         self.successes = QLabel()
         self.successes.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
@@ -123,33 +102,18 @@ class MainWindow(QWidget):
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
         self.skim_percentage = QLabel()
-        self.sector_avg = QLabel()
+        self.sector_average = QLabel()
 
-        self.time_remaining = QLabel()
-
-        self.current_addr = QPushButton('Display current address in skim')
-        self.current_addr.clicked.connect(self.display_current_skim_address)
+        self.skim_address_button = QPushButton('Display current address in skim')
+        self.skim_address_button.clicked.connect(self.display_current_skim_address)
 
         self.start_button = QPushButton('Start')
         self.start_button.clicked.connect(self.start)
 
-        #self.main_clock = QtCore.QTimer(self)
-        self.time_remaining = QLabel()
         self.time = QtCore.QTime(0, 0, 0)
-        self.main_clock = QtCore.QTimer(self)
-        self.main_clock.timeout.connect(self.render_main_clock)
-
-        grid = QGridLayout()
-        grid.addWidget(self.file_info_box, 0, 0)
-
-        self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.skim_percentage, 6, 2)
-
-        self.sector_avg.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.sector_avg, 9, 2)
-
-        self.time_remaining.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        grid.addWidget(self.time_remaining, 8, 2)
+        self.time_label = QLabel()
+        self.clock = QtCore.QTimer(self)
+        self.clock.timeout.connect(self.draw_clock)
 
         self.current_inspections = {}
         self.current_inspection_averages = {}
@@ -160,42 +124,46 @@ class MainWindow(QWidget):
         self.inspections_vbox = QVBoxLayout()
         self.inspections_box.setLayout(self.inspections_vbox)
         self.inspections_box.hide()
+
+        self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.sector_average.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.time_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+
+        grid = QGridLayout()
+        grid.addWidget(self.time_label, 8, 2)
+        grid.addWidget(self.sector_average, 9, 2)
+        grid.addWidget(self.skim_percentage, 6, 2)
+        grid.addWidget(file_info_box, 0, 0)
         grid.addWidget(self.inspections_box, 5, 0, 1, 3)
-
         grid.addWidget(self.successes, 0, 2)
-        grid.addWidget(self.current_addr, 7, 2)
+        grid.addWidget(self.skim_address_button, 7, 2)
         grid.addWidget(self.skim_progress_bar, 4, 0, 1, 3)
-
         grid.addWidget(self.start_button, 9, 0)
-        grid.addLayout(start_at_hbox, 10, 0)
-
+        grid.addLayout(init_address_hbox, 10, 0)
         self.setLayout(grid)
-
-        #QtCore.QThread.currentThread().setPriority(6)
-        current_thread().name = "MAIN GUI THREAD"
 
     def display_current_skim_address(self):
         if not self.current_inspections:
-            self.current_addr.setText(hex(self.job.skim_reader.fobj.tell()))
+            self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()))
         else:
-            self.current_addr.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
+            self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
 
-    def render_main_clock(self):
+    def draw_clock(self):
         if self.current_inspections:
             if self.current_slowest_inspection:
                 self.time = self.time.addSecs(-1)                
                 the_time = self.time.toString("h:mm:ss")
-                self.time_remaining.setText("Average time to parse " \
+                self.time_label.setText("Average time to parse " \
                     + str(len(self.current_inspections) * self.inspection_sample_size) \
                     + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
                     + " s\n" + the_time + " remaining to finish all close inspections.\n")
             else:
-                self.time_remaining.setText(self.time.toString("h:mm:ss") + \
+                self.time_label.setText(self.time.toString("h:mm:ss") + \
                     " remaining in skim (paused)... calculating time remaining in close inspection(s).")
         else:
             self.time = self.time.addSecs(-1)                
             the_time = self.time.toString("h:mm:ss")
-            self.time_remaining.setText(the_time + " remaining in skim")
+            self.time_label.setText(the_time + " remaining in skim")
             
     def closeEvent(self, event):
         if not self.job.finished:
@@ -212,7 +180,7 @@ class MainWindow(QWidget):
     def new_skim_average(self, data):
         avg = data[0]
         estimate = data[1]
-        self.sector_avg.setText("Average time to skim " \
+        self.sector_average.setText("Average time to skim " \
             + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size) + " sectors (" \
             + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size * 512 / 1000000) \
             + " MB): {:.2f}".format(avg) + " seconds")
@@ -261,6 +229,7 @@ class MainWindow(QWidget):
 
         self.inspections_vbox.addWidget(label)
         self.inspections_vbox.addLayout(bars)
+
         self.inspections_box.show()
 
         self.current_inspections[forward_gui.id_str] = forward_gui
@@ -269,15 +238,20 @@ class MainWindow(QWidget):
         inspection.forward.progress_signal.connect(forward_gui.update)
         inspection.backward.progress_signal.connect(backward_gui.update)
 
-        inspection.forward.finished_signal.connect(forward_gui.finish)
-        inspection.backward.finished_signal.connect(backward_gui.finish)
+        inspection.forward.finished_signal.connect(lambda: self.finish_inspection(forward_gui))
+        inspection.backward.finished_signal.connect(lambda: self.finish_inspection(backward_gui))
 
-    def invalid_address(self, invalid_input, selected_vol):
+    def finish_inspection(self, reader):
+        reader.progress_bar.setParent(None)
+        reader.label.setParent(None)
+        del self.current_inspections[reader.id_str]
+
+    def invalid_address(self, invalid_input):
         msg = QMessageBox()
         msg.setIcon(QMessageBox.Warning)
         msg.setText(invalid_input + ' is not a valid address.')
         msg.setInformativeText('Please enter a value between 0x0 and ' \
-            + str(hex(disk_usage(selected_vol + ':\\').total).upper() + '.'))
+            + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
@@ -286,7 +260,7 @@ class MainWindow(QWidget):
             if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
                 self.start_button.setText('...')
                 self.start_button.setDisabled(True)
-                self.start_at.setDisabled(True)
+                self.init_address_input.setDisabled(True)
                 return int(inp, 16)
             else:
                 return None
@@ -294,11 +268,13 @@ class MainWindow(QWidget):
             return None
 
     def start(self):
-
-        user_input = self.start_at.text()
+        
+        user_input = self.init_address_input.text()
+        if not user_input:
+            user_input = '0'
         validated_start_address = self.validate_hex(user_input)
         if validated_start_address is None:
-            self.invalid_address(user_input, self.selected_vol)
+            self.invalid_address(user_input)
             return
 
         self.skim_progress_bar.setTextVisible(True)
@@ -311,12 +287,11 @@ class MainWindow(QWidget):
 
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.finished)
+        self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
+        self.job.loading_complete_signal.connect(self.loading_finished)
         self.job.skim_reader.resumed_signal.connect(self.clean_up_inspection_gui)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
-
-        self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
-        self.job.loading_complete_signal.connect(self.loading_finished)
         
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
@@ -335,7 +310,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
         self.new_skim_average(data[1])
-        self.main_clock.start(1000)
+        self.clock.start(1000)
 
     def finished(self, success):
         FinishedDialog(success, self.job.rebuilt_file_path).exec()
@@ -351,6 +326,6 @@ class MainWindow(QWidget):
     def skim_gui_update(self):
         progress =  self.job.skim_reader.perf.sectors_read
         percent = 100 * progress / self.job.skim_reader.perf.total_sectors_to_read
-        self.skim_percentage.setText("{:.8f}".format(percent) + "%")
+        self.skim_percentage.setText("Skim progress: {:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
         
