@@ -121,6 +121,7 @@ class SkimReader(DiskReader):
         self.resuming_flag = False
         self.init_address = init_address
         self.second_pass = False
+        self.perf = None
 
     def request_resume(self):
         if not self.resuming_flag:
@@ -206,8 +207,8 @@ class Job(QtCore.QObject):
         def fake_fn(inp):
             _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
 
-        test_perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, sample_size=100)
-        insp_sample_size = InspectionPerformanceCalc(SECTOR_SIZE, '').sample_size
+        test_perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, sample_size=100)
+        insp_sample_size = InspectionPerformanceCalc(10, '').sample_size
         self.skim_reader.fobj.seek(0)
         test_perf.start()
         for _ in range(test_perf.sample_size + 1):
@@ -221,7 +222,7 @@ class Job(QtCore.QObject):
     def run(self):        
         test_results = self.test_run()
         init_avg = test_results[1][0]
-        self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, SECTOR_SIZE, self.skim_reader.jump_size, init_avg=init_avg)
+        self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, init_avg=init_avg)
         self.loading_complete_signal.emit(test_results)
         self.skim_reader.read()
 

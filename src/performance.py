@@ -3,17 +3,14 @@ from datetime import timedelta
 from math import ceil
 from PyQt5 import QtCore
 
-SECTOR_SIZE = None
 DEFAULT_SAMPLE_SIZE = 1000
 
 class PerformanceCalculator(QtCore.QObject):
 
     new_average_signal = QtCore.pyqtSignal(tuple)
 
-    def __init__(self, volume_size, sector_size, jump_size, **kwargs):
+    def __init__(self, volume_size, jump_size, **kwargs):
         super().__init__()
-        global SECTOR_SIZE
-        SECTOR_SIZE = sector_size
 
         try:
             self.sample_size = kwargs['sample_size']
@@ -32,6 +29,7 @@ class PerformanceCalculator(QtCore.QObject):
         self.cur_start = None
         self.cur_incr = 0
         self.sectors_read = 0
+        self.next_reset = None
 
     def start(self):
         self.next_reset = self.sectors_read + self.sample_size
@@ -68,6 +66,7 @@ class InspectionPerformanceCalc(QtCore.QObject):
         self.sectors_read = 0
         self.sample_size = 1000
         self.total_sectors_to_read = total_sectors
+        self.next_reset = None
 
     def start(self):
         self.next_reset = self.sectors_read + self.sample_size
