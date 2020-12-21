@@ -4,10 +4,11 @@ from threading import Lock, current_thread
 from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc
+from ptvsd import debug_this_thread
 
 SECTOR_SIZE = 512
 MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
-
+inspection_manipulation_mutex = Lock()
 threadpool = QtCore.QThreadPool.globalInstance()
 threadpool.setMaxThreadCount(cpu_count() - 3)
 
@@ -62,7 +63,8 @@ class CloseReader(DiskReader):
     def __init__(self, start_at, backward=False):
         super().__init__(job.disk_path)
         self.start_at = start_at
-        self.sector_limit = job.total_sectors // 2
+        #self.sector_limit = job.total_sectors // 2
+        self.sector_limit = 20
         self.sector_count = 0
         self.success_count = 0
         self.consecutive_successes = 0
@@ -75,6 +77,7 @@ class CloseReader(DiskReader):
         job.skim_reader.perf.children.append(self.perf)
 
     def read(self):
+        debug_this_thread()
         current_thread().name = self.id_tuple[0] + self.id_tuple[2]
         self.fobj.seek(self.start_at)
         self.perf.start()
@@ -88,17 +91,25 @@ class CloseReader(DiskReader):
             threadpool.start(Worker(self.emit_progress))
             time.sleep(0.01)
 
+        inspection_manipulation_mutex.acquire()
+        job.skim_reader.inspections.remove(self)
+        inspection_manipulation_mutex.release()
+
         if not data:
             job.skim_reader.handle_eof()
         else:
-            job.skim_reader.request_resume()
-
-        if self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.5:
-            job.CloseInspection(self.fobj.tell() + (self.sector_limit * SECTOR_SIZE))
+            new_insp_address = self.fobj.tell() + (self.sector_limit * SECTOR_SIZE)        
+            if (self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.5) \
+                and not job.skim_reader.inspection_in_progress(new_insp_address):
+                job.CloseInspection(new_insp_address)
+            else:
+                #print('request')
+                job.skim_reader.request_resume()
 
         job.skim_reader.perf.children.remove(self.perf)
-        job.skim_reader.inspections.remove(self)
+
         self.finished_signal.emit(self.success_count / self.sector_count)
+        #print(self.id_tuple[0] + self.id_tuple[2] + " EMIT")
         current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
         del self.perf
             
@@ -119,20 +130,17 @@ class SkimReader(DiskReader):
         self.jump_size = jump_size * SECTOR_SIZE
         self.inspections = []
         self.resume_at = None
-        self.resuming_flag = False
         self.init_address = init_address
         self.second_pass = False
         self.perf = None
 
     def request_resume(self):
-        if not self.resuming_flag:
-            self.resuming_flag = True
-            if self.inspections:
-                self.resuming_flag = False
-                return
-            else:
-                self.resumed_signal.emit()
-                self.read(self.resume_at) # only resume if all children are finished
+        inspection_manipulation_mutex.acquire()
+        if not self.inspections: # only resume if all children are finished               
+            threadpool.start(Worker(self.read, self.resume_at))
+            self.resumed_signal.emit()
+        inspection_manipulation_mutex.release()
+        
     
     def handle_eof(self):
         if self.inspections:
@@ -161,7 +169,6 @@ class SkimReader(DiskReader):
             self.fobj.seek(self.jump_size, 1)
         if self.inspections and not job.finished:
             self.resume_at = self.fobj.tell()
-            self.resuming_flag = False
 
         if not data:
             self.handle_eof()
@@ -175,7 +182,7 @@ class SkimReader(DiskReader):
         for reader in self.inspections:
             upper_limit = reader.id_tuple[1] + (reader.sector_limit * SECTOR_SIZE)
             lower_limit = reader.id_tuple[1] - (reader.sector_limit * SECTOR_SIZE)
-            if lower_limit <= addr and addr <= upper_limit:
+            if lower_limit < addr and addr < upper_limit:
                 return True
         return False
 
@@ -230,12 +237,14 @@ class Job(QtCore.QObject):
     class CloseInspection(QtCore.QObject):
         def __init__(self, address):
             super().__init__()
+            inspection_manipulation_mutex.acquire()
             self.address = address
             self.forward = CloseReader(self.address)
             self.backward = CloseReader(self.address, True)
             job.skim_reader.inspections.append(self.forward)
             job.skim_reader.inspections.append(self.backward)
             job.skim_reader.new_inspection_signal.emit(self)
+            inspection_manipulation_mutex.release()
             threadpool.start(Worker(self.forward.read))
             threadpool.start(Worker(self.backward.read))
 

@@ -1,5 +1,5 @@
 # Standard library imports
-from threading import current_thread
+from threading import current_thread, Lock
 from shutil import disk_usage
 import sys
 # Third-party imports
@@ -11,6 +11,8 @@ from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
 
 # Local imports
 from recreate_file import Job, SECTOR_SIZE
+
+inspection_gui_manipulation_mutex = Lock()
 
 class SourceFile():
     def __init__(self, path):
@@ -199,15 +201,20 @@ class MainWindow(QWidget):
         self.current_inspection_averages[id_str] = avg
         if len(self.current_inspection_averages) == len(self.current_inspections):
             slowest = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
+            secs = self.current_inspections[slowest].estimate_fn()
+            if secs == '...':
+                return
             self.current_slowest_inspection = self.current_inspections[slowest]
             self.time.setHMS(0,0,0)
-            self.time = self.time.addSecs(self.current_inspections[slowest].estimate_fn())
+            self.time = self.time.addSecs(secs)
             del self.current_inspection_averages
             self.current_inspection_averages = {}
 
     def initialize_inspection_gui(self, inspection):
+        inspection_gui_manipulation_mutex.acquire()
         label_prefix = hex(inspection.address)
         self.inspection_labels[label_prefix] = QLabel(label_prefix)
+        self.inspection_labels[label_prefix].setStyleSheet("font-weight: bold")
 
         inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
         inspection.backward.perf.new_average_signal.connect(self.new_inspection_average)
@@ -242,6 +249,8 @@ class MainWindow(QWidget):
         self.current_inspections[forward_gui.id_str] = forward_gui
         self.current_inspections[backward_gui.id_str] = backward_gui
 
+        inspection_gui_manipulation_mutex.release()
+
         inspection.forward.progress_signal.connect(forward_gui.update)
         inspection.backward.progress_signal.connect(backward_gui.update)
 
@@ -250,14 +259,39 @@ class MainWindow(QWidget):
 
     def finish_inspection(self, reader, success_rate):
         reader.success_rate = success_rate
-        reader.finished = True
         reader.progress_bar.setParent(None)
         reader.label.setParent(None)
+        reader.finished = True
         if reader.sibling.finished:
             overall_success_rate = (reader.success_rate + reader.sibling.success_rate) / 2
             text = self.inspection_labels[reader.address].text()
             self.inspection_labels[reader.address].setText(text + " [" + "{:.2f}".format(overall_success_rate * 100) + "% success]")
+        
+        inspection_gui_manipulation_mutex.acquire()
         del self.current_inspections[reader.id_str]
+        inspection_gui_manipulation_mutex.release()
+        
+        label_list = [] 
+        for i in reversed(range(self.inspections_vbox.count())): 
+            try:
+                widget = self.inspections_vbox.itemAt(i).widget()
+                if isinstance(widget, QLabel) and "% success]" in widget.text():
+                    label_list.append(widget)
+            except AttributeError:
+                pass
+        label_list = label_list[:5]
+        for i in reversed(range(self.inspections_vbox.count())): 
+            try:
+                widget = self.inspections_vbox.itemAt(i).widget()
+                if isinstance(widget, QLabel) and "% success]" in widget.text():
+                    if widget in label_list:
+                        widget.show()
+                        widget.setStyleSheet("")
+                    else:
+                        widget.setParent(None)
+            except AttributeError:
+                pass
+
 
     def invalid_address(self, invalid_input):
         msg = QMessageBox()
