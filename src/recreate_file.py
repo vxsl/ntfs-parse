@@ -218,20 +218,28 @@ class Job(QtCore.QObject):
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using data from " + vol + "]" + self.file.name.split('.')[1]
 
     def test_run(self):
+
         def fake_fn(inp):
             _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
 
-        test_perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, sample_size=100)
-        insp_sample_size = InspectionPerformanceCalc(10, '').sample_size
+        smaller_sample_size = 100
+
+        test_perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size)
+        default_insp_sample_size = test_perf.sample_size
+        test_perf.sample_size = smaller_sample_size
+
         self.skim_reader.fobj.seek(0)
         test_perf.start()
+
         for _ in range(test_perf.sample_size + 1):
             data = self.skim_reader.fobj.read(SECTOR_SIZE)
             threadpool.start(Worker(fake_fn, data))
             test_perf.increment()
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
-        return (insp_sample_size, (test_perf.avg, test_perf.get_remaining_seconds()))
+
+        adjusted_average = default_insp_sample_size * test_perf.avg / smaller_sample_size
+        return (default_insp_sample_size, (adjusted_average, test_perf.get_remaining_seconds()))
 
     def run(self):        
         test_results = self.test_run()
