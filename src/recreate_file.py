@@ -3,7 +3,8 @@ from shutil import disk_usage
 from threading import Lock, current_thread
 from multiprocessing import cpu_count
 from PyQt5 import QtCore
-from performance import PerformanceCalculator, InspectionPerformanceCalc
+from performance import PerformanceCalculator, InspectionPerformanceCalc, \
+    DEFAULT_SAMPLE_SIZE, LARGER_SAMPLE_SIZE
 from ptvsd import debug_this_thread
 
 SECTOR_SIZE = 512
@@ -213,6 +214,11 @@ class Job(QtCore.QObject):
         jump_size = self.total_sectors // 2
         self.skim_reader = SkimReader(self.disk_path, jump_size, init_address)
         self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using data from " + vol + "]." + self.file.name.split('.')[1]
+        if self.total_sectors <= 39062:
+            self.small_file = True
+        else:
+            self.small_file = False
+
 
     def test_run(self):
 
@@ -221,8 +227,8 @@ class Job(QtCore.QObject):
 
         smaller_sample_size = 100
 
-        test_perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size)
-        default_insp_sample_size = test_perf.sample_size
+        test_perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, self.small_file)
+        real_perf_sample_size = test_perf.sample_size
         test_perf.sample_size = smaller_sample_size
 
         self.skim_reader.fobj.seek(0)
@@ -235,13 +241,13 @@ class Job(QtCore.QObject):
             self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
 
-        adjusted_average = default_insp_sample_size * test_perf.avg / smaller_sample_size
-        return (default_insp_sample_size, (adjusted_average, test_perf.get_remaining_seconds()))
+        adjusted_average = real_perf_sample_size * test_perf.avg / smaller_sample_size
+        return (real_perf_sample_size, (adjusted_average, test_perf.get_remaining_seconds()))
 
     def run(self):        
         test_results = self.test_run()
         init_avg = test_results[1][0]
-        self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, init_avg=init_avg)
+        self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, self.small_file, init_avg=init_avg)
         self.loading_complete_signal.emit(test_results)
         self.skim_reader.read()
 

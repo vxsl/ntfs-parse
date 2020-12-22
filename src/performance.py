@@ -4,18 +4,22 @@ from math import ceil
 from PyQt5 import QtCore
 
 DEFAULT_SAMPLE_SIZE = 1000
+LARGER_SAMPLE_SIZE = 10000
 
 class PerformanceCalculator(QtCore.QObject):
 
     new_average_signal = QtCore.pyqtSignal(tuple)
 
-    def __init__(self, volume_size, jump_size, **kwargs):
+    def __init__(self, volume_size, jump_size, small_file, **kwargs):
         super().__init__()
 
         try:
             self.sample_size = kwargs['sample_size']
         except KeyError:
-            self.sample_size = DEFAULT_SAMPLE_SIZE
+            if small_file:
+                self.sample_size = LARGER_SAMPLE_SIZE
+            else:
+                self.sample_size = DEFAULT_SAMPLE_SIZE
 
         try:
             self.avg = kwargs['init_avg']
