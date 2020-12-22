@@ -39,14 +39,16 @@ class SourceFile():
         return result
 
 class FinishedDialog(QMessageBox):
-    def __init__(self, success, path):
+    def __init__(self, success, path, portion_rebuilt, auto_filled, total_sectors):
         super().__init__()
         self.setWindowTitle('recoverability')
         self.setIcon(QMessageBox.Warning)
         if success:
-            self.setText('Finished: output written to ' + path)
+            self.setText('Finished: output written to ' + path + '\n\n' + str(auto_filled) \
+                + ' meaningless sectors auto-filled (' + "{:.2f}".format(auto_filled / total_sectors) \
+                + ' %)')
         else:
-            self.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable.')
+            self.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, or you have chosen a file that did not previously exist on the volume.\n\n' + "{:.2f}".format(100 * portion_rebuilt) + "% of the file was able to be reconstructed using data from this volume.")
         self.setStandardButtons(QMessageBox.Ok)
 
 class InspectionModel(QtCore.QObject):
@@ -58,7 +60,9 @@ class InspectionModel(QtCore.QObject):
         self.sibling = None
         self.id_str = id_tuple[0] + id_tuple[2]
         self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(False)
         self.label = QLabel(prefix)
+        self.label.setStyleSheet("font-weight: bold")
         self.sector_limit = sector_limit
         self.avg = 0
         self.estimate_fn = estimate_fn
@@ -72,7 +76,7 @@ class InspectionModel(QtCore.QObject):
                                 + "% success")
         else:
             self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
-                                + '\n...\n...')
+                                + '\nCalculating...')
 
 class MainWindow(QWidget):
     def __init__(self, selected_vol, path):
@@ -97,7 +101,11 @@ class MainWindow(QWidget):
         rebuilt_file_hbox = QHBoxLayout()
         self.rebuilt_file_info = QLabel()
         self.rebuilt_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.rebuilt_file_info.setText("0/" + (str(len(self.file.remaining_sectors))))
+        self.rebuilt_file_info.setText(("Last match: (none)\n\n") \
+        + ("0/" + (str(len(self.file.remaining_sectors))) \
+        + " = " + "0.00%" \
+        + "\n\nTesting equality for " + (str(len(self.file.remaining_sectors))) \
+        + " remaining sectors..."))
         rebuilt_file_hbox.addWidget(self.rebuilt_file_info)
         rebuilt_file_group_box.setLayout(rebuilt_file_hbox)
 
@@ -374,8 +382,8 @@ class MainWindow(QWidget):
         self.new_skim_average(data[1])
         self.clock.start(1000)
 
-    def finished(self, success):
-        FinishedDialog(success, self.job.rebuilt_file_path, (self.job.done_sectors / self.job.total_sectors)).exec()
+    def finished(self, data):
+        FinishedDialog(data[0], self.job.rebuilt_file_path, (self.job.done_sectors / self.job.total_sectors), data[1], self.job.total_sectors).exec()
         self.close()
 
     def file_gui_update(self, i):
@@ -388,6 +396,6 @@ class MainWindow(QWidget):
     def skim_gui_update(self):
         progress =  self.job.skim_reader.perf.sectors_read
         percent = 100 * progress / self.job.skim_reader.perf.total_sectors_to_read
-        self.skim_percentage.setText("Skim progress: {:.8f}".format(percent) + "%")
+        self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
         

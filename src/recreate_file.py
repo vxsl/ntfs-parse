@@ -193,7 +193,7 @@ class SkimReader(DiskReader):
 class Job(QtCore.QObject):
 
     success_signal = QtCore.pyqtSignal(int)
-    finished_signal = QtCore.pyqtSignal(bool)
+    finished_signal = QtCore.pyqtSignal(tuple)
     loading_progress_signal = QtCore.pyqtSignal(float)
     loading_complete_signal = QtCore.pyqtSignal(tuple)
 
@@ -268,12 +268,13 @@ class Job(QtCore.QObject):
     def finish(self):
 
         self.finished = True
-
+        auto_filled = 0
         for sector in filter(None, job.file.remaining_sectors):
             if sector in MEANINGLESS_SECTORS:
                 i = job.file.remaining_sectors.index(sector)
                 job.file.address_table[i] = sector
                 job.file.remaining_sectors[i] = None
+                auto_filled += 1
 
         fobj = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
         out_file = open(self.rebuilt_file_path, 'wb')
@@ -282,5 +283,5 @@ class Job(QtCore.QObject):
             out_file.write(fobj.read(SECTOR_SIZE))
             out_file.flush()
         out_file.close()
-        self.finished_signal.emit(True)
+        self.finished_signal.emit((True, auto_filled))
 
