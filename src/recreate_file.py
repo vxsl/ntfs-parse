@@ -124,7 +124,6 @@ class CloseReader(DiskReader):
 class SkimReader(DiskReader):
 
     new_inspection_signal = QtCore.pyqtSignal(object)
-    resumed_signal = QtCore.pyqtSignal()
     progress_signal = QtCore.pyqtSignal(float)
 
     def __init__(self, disk_path, jump_sectors, init_address):
@@ -140,7 +139,6 @@ class SkimReader(DiskReader):
         inspection_manipulation_mutex.acquire()
         if not self.inspections: # only resume if all children are finished               
             threadpool.start(Worker(self.read, self.resume_at))
-            self.resumed_signal.emit()
         inspection_manipulation_mutex.release()
         
     

@@ -244,7 +244,6 @@ class MainWindow(QWidget):
 
         inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
         inspection.backward.perf.new_average_signal.connect(self.new_inspection_average)
-
         forward_gui = InspectionModel(inspection.forward.id_tuple, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
         backward_gui = InspectionModel(inspection.backward.id_tuple, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
 
@@ -255,14 +254,12 @@ class MainWindow(QWidget):
 
         # add forward to layout
         box = QVBoxLayout()
-        forward_gui.progress_bar.setTextVisible(False)
         box.addWidget(forward_gui.progress_bar)
         box.addWidget(forward_gui.label)
         bars.addLayout(box)
 
         # add backward to layout
         box = QVBoxLayout()
-        backward_gui.progress_bar.setTextVisible(False)
         box.addWidget(backward_gui.progress_bar)
         box.addWidget(backward_gui.label)
         bars.addLayout(box)
@@ -363,20 +360,11 @@ class MainWindow(QWidget):
         self.job.finished_signal.connect(self.finished)
         self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
         self.job.loading_complete_signal.connect(self.loading_finished)
-        self.job.skim_reader.resumed_signal.connect(self.clean_up_inspection_gui)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
         
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
-
-    def clean_up_inspection_gui(self):
-        for i in reversed(range(self.inspections_vbox.count())): 
-            try:
-                self.inspections_vbox.itemAt(i).widget().setParent(None)
-            except AttributeError:
-                pass
-        self.inspections_box.hide()
 
     def loading_finished(self, data):
         self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
