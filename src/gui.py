@@ -249,6 +249,10 @@ class MainWindow(QWidget):
             self.current_inspection_averages = {}
 
     def initialize_inspection_gui(self, inspection):
+
+        self.skim_progress_bar.setTextVisible(True)
+        self.skim_progress_bar.setFormat("Paused")
+
         inspection_gui_manipulation_mutex.acquire()
         label_prefix = hex(inspection.address)
         self.inspection_labels[label_prefix] = QLabel(label_prefix)
@@ -371,6 +375,7 @@ class MainWindow(QWidget):
         self.job.loading_complete_signal.connect(self.loading_finished)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
+        self.job.skim_reader.resuming_signal.connect(lambda: self.skim_progress_bar.setTextVisible(False))
         
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
