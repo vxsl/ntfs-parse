@@ -42,7 +42,7 @@ class Worker(QtCore.QRunnable):
                 close_reader.success_count += 1
                 close_reader.consecutive_successes += 1
             elif not job.skim_reader.inspection_in_progress(addr):
-                job.CloseInspection(actual_address)
+                job.new_close_inspection(actual_address)
             if all(_ in MEANINGLESS_SECTORS for _ in filter(None, job.file.remaining_sectors)) \
                 and not job.finished:
                 job.finish()
@@ -104,7 +104,7 @@ class CloseReader(DiskReader):
             new_insp_address = self.fobj.tell() + (self.sector_limit * SECTOR_SIZE)        
             if (self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.4) \
                 and not job.skim_reader.inspection_in_progress(new_insp_address):
-                job.CloseInspection(new_insp_address)
+                job.new_close_inspection(new_insp_address)
             else:
                 #print('request')
                 job.skim_reader.request_resume()
@@ -253,19 +253,17 @@ class Job(QtCore.QObject):
         self.loading_complete_signal.emit(test_results)
         self.skim_reader.read()
 
-    class CloseInspection(QtCore.QObject):
-        def __init__(self, address):
-            super().__init__()
-            inspection_manipulation_mutex.acquire()
-            self.address = address
-            self.forward = CloseReader(self.address)
-            self.backward = CloseReader(self.address, True)
-            job.skim_reader.inspections.append(self.forward)
-            job.skim_reader.inspections.append(self.backward)
-            job.skim_reader.new_inspection_signal.emit(self)
-            inspection_manipulation_mutex.release()
-            threadpool.start(Worker(self.forward.read))
-            threadpool.start(Worker(self.backward.read))
+    def new_close_inspection(self, address):
+        super().__init__()
+        inspection_manipulation_mutex.acquire()
+        forward = CloseReader(address)
+        backward = CloseReader(address, True)
+        job.skim_reader.inspections.append(forward)
+        job.skim_reader.inspections.append(backward)
+        job.skim_reader.new_inspection_signal.emit((address, forward, backward))
+        inspection_manipulation_mutex.release()
+        threadpool.start(Worker(forward.read))
+        threadpool.start(Worker(backward.read))
 
     def finish(self):
 

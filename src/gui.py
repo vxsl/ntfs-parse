@@ -248,20 +248,23 @@ class MainWindow(QWidget):
             del self.current_inspection_averages
             self.current_inspection_averages = {}
 
-    def initialize_inspection_gui(self, inspection):
+    def initialize_inspection_gui(self, data):
+        address = data[0]
+        forward = data[1]
+        backward = data[2]
 
         self.skim_progress_bar.setTextVisible(True)
         self.skim_progress_bar.setFormat("Paused")
 
         inspection_gui_manipulation_mutex.acquire()
-        label_prefix = hex(inspection.address)
+        label_prefix = hex(address)
         self.inspection_labels[label_prefix] = QLabel(label_prefix)
         self.inspection_labels[label_prefix].setStyleSheet("font-weight: bold")
 
-        inspection.forward.perf.new_average_signal.connect(self.new_inspection_average)
-        inspection.backward.perf.new_average_signal.connect(self.new_inspection_average)
-        forward_gui = InspectionModel(inspection.forward.id_tuple, inspection.forward.sector_limit, label_prefix, inspection.forward.perf.get_remaining_estimate)
-        backward_gui = InspectionModel(inspection.backward.id_tuple, inspection.backward.sector_limit, label_prefix, inspection.backward.perf.get_remaining_estimate)
+        forward.perf.new_average_signal.connect(self.new_inspection_average)
+        backward.perf.new_average_signal.connect(self.new_inspection_average)
+        forward_gui = InspectionModel(forward.id_tuple, forward.sector_limit, label_prefix, forward.perf.get_remaining_estimate)
+        backward_gui = InspectionModel(backward.id_tuple, backward.sector_limit, label_prefix, backward.perf.get_remaining_estimate)
 
         forward_gui.sibling = backward_gui
         backward_gui.sibling = forward_gui
@@ -290,11 +293,11 @@ class MainWindow(QWidget):
 
         inspection_gui_manipulation_mutex.release()
 
-        inspection.forward.progress_signal.connect(forward_gui.update)
-        inspection.backward.progress_signal.connect(backward_gui.update)
+        forward.progress_signal.connect(forward_gui.update)
+        backward.progress_signal.connect(backward_gui.update)
 
-        inspection.forward.finished_signal.connect(lambda success_rate: self.finish_inspection(forward_gui, success_rate))
-        inspection.backward.finished_signal.connect(lambda success_rate: self.finish_inspection(backward_gui, success_rate))
+        forward.finished_signal.connect(lambda success_rate: self.finish_inspection(forward_gui, success_rate))
+        backward.finished_signal.connect(lambda success_rate: self.finish_inspection(backward_gui, success_rate))
 
     def finish_inspection(self, reader, success_rate):
         reader.success_rate = success_rate
