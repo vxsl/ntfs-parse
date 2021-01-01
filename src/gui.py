@@ -328,16 +328,9 @@ class MainWindow(QWidget):
                 pass
 
 
-    def invalid_address(self, invalid_input):
-        msg = QMessageBox()
-        msg.setIcon(QMessageBox.Warning)
-        msg.setText(invalid_input + ' is not a valid address.')
-        msg.setInformativeText('Please enter a value between 0x0 and ' \
-            + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
-        msg.setStandardButtons(QMessageBox.Ok)
-        msg.exec()
+    def start(self):
 
-    def validate_hex(self, inp):
+        def validate_hex(inp):
         try:
             if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
                 self.start_button.setText('...')
@@ -349,15 +342,19 @@ class MainWindow(QWidget):
         except ValueError:
             return None
 
-    def start(self):
-        
         user_input = self.init_address_input.text()
         if not user_input:
             self.init_address_input.setText('0x00000000')
             user_input = self.init_address_input.text()
-        validated_start_address = self.validate_hex(user_input)
+        validated_start_address = validate_hex(user_input)
         if validated_start_address is None:
-            self.invalid_address(user_input)
+            msg = QMessageBox()
+            msg.setIcon(QMessageBox.Warning)
+            msg.setText(user_input + ' is not a valid address.')
+            msg.setInformativeText('Please enter a value between 0x0 and ' \
+                + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
+            msg.setStandardButtons(QMessageBox.Ok)
+            msg.exec()  
             return
 
         self.skim_progress_bar.setTextVisible(True)
