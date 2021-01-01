@@ -102,7 +102,7 @@ class CloseReader(DiskReader):
             job.skim_reader.handle_eof()
         else:
             new_insp_address = self.fobj.tell() + (self.sector_limit * SECTOR_SIZE)        
-            if (self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.5) \
+            if (self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.4) \
                 and not job.skim_reader.inspection_in_progress(new_insp_address):
                 job.CloseInspection(new_insp_address)
             else:
