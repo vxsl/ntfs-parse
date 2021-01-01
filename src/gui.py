@@ -44,9 +44,13 @@ class FinishedDialog(QMessageBox):
         self.setWindowTitle('recoverability')
         self.setIcon(QMessageBox.Warning)
         if success:
+            if auto_filled > 0:
             self.setText('Finished: output written to ' + path + '\n\n' + str(auto_filled) \
-                + ' meaningless sectors auto-filled (' + "{:.2f}".format(auto_filled / total_sectors) \
-                + ' %)')
+                    + ' meaningless sectors were auto-filled (' + "{:.6f}".format(auto_filled / total_sectors) \
+                    + '%)')
+        else:
+                self.setText('Finished: output written to ' + path + '\n\n' \
+                    + 'No meaningless sectors were auto-filled.')
         else:
             self.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, or you have chosen a file that did not previously exist on the volume.\n\n' + "{:.2f}".format(100 * portion_rebuilt) + "% of the file was able to be reconstructed using data from this volume.")
         self.setStandardButtons(QMessageBox.Ok)
