@@ -19,7 +19,7 @@ class Worker(QtCore.QRunnable):
         super(Worker, self).__init__()
 
         if not fn:
-            self.fn = self.check_sector 
+            self.fn = self.check_sector
         else:
             self.fn = fn
         self.args = args
@@ -101,7 +101,7 @@ class CloseReader(DiskReader):
         if not data:
             job.skim_reader.handle_eof()
         else:
-            new_insp_address = self.fobj.tell() + (self.sector_limit * SECTOR_SIZE)        
+            new_insp_address = self.fobj.tell() + (self.sector_limit * SECTOR_SIZE)
             if (self.consecutive_successes > 0 or (self.success_count / self.sector_count) > 0.4) \
                 and not job.skim_reader.inspection_in_progress(new_insp_address):
                 job.new_close_inspection(new_insp_address)
@@ -115,16 +115,16 @@ class CloseReader(DiskReader):
         #print(self.id_tuple[0] + self.id_tuple[2] + " EMIT")
         current_thread().name = ("X " + self.id_tuple[0] + self.id_tuple[2])
         del self.perf
-            
+
         return
 
-    def emit_progress(self):	
-        self.perf.increment()	
-        self.progress_signal.emit((self.sector_count, self.success_count))        	
+    def emit_progress(self):
+        self.perf.increment()
+        self.progress_signal.emit((self.sector_count, self.success_count))
 
 class SkimReader(DiskReader):
 
-    new_inspection_signal = QtCore.pyqtSignal(object)
+    new_inspection_signal = QtCore.pyqtSignal(tuple)
     progress_signal = QtCore.pyqtSignal(float)
     resuming_signal = QtCore.pyqtSignal()
 
@@ -139,12 +139,12 @@ class SkimReader(DiskReader):
 
     def request_resume(self):
         inspection_manipulation_mutex.acquire()
-        if not self.inspections: # only resume if all children are finished    
-            self.resuming_signal.emit()           
+        if not self.inspections: # only resume if all children are finished
+            self.resuming_signal.emit()
             threadpool.start(Worker(self.read, self.resume_at))
         inspection_manipulation_mutex.release()
-        
-    
+
+
     def handle_eof(self):
         if self.inspections:
             return
@@ -157,7 +157,7 @@ class SkimReader(DiskReader):
 
     def read(self, start_at=None):
         if start_at is None:
-            start_at = self.init_address 
+            start_at = self.init_address
         current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
         self.perf.start()
@@ -196,8 +196,8 @@ class Job(QtCore.QObject):
 
     success_signal = QtCore.pyqtSignal(int)
     finished_signal = QtCore.pyqtSignal(tuple)
-    loading_progress_signal = QtCore.pyqtSignal(float)
-    loading_complete_signal = QtCore.pyqtSignal(tuple)
+    test_run_progress_signal = QtCore.pyqtSignal(float)
+    test_run_finished_signal = QtCore.pyqtSignal(tuple)
 
     def __init__(self, vol, file, init_address):
         super().__init__()
@@ -240,17 +240,17 @@ class Job(QtCore.QObject):
             data = self.skim_reader.fobj.read(SECTOR_SIZE)
             threadpool.start(Worker(fake_fn, data))
             test_perf.increment()
-            self.loading_progress_signal.emit(100 * _ / test_perf.sample_size)
+            self.test_run_progress_signal.emit(100 * _ / test_perf.sample_size)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
 
         adjusted_average = real_perf_sample_size * test_perf.avg / smaller_sample_size
         return (real_perf_sample_size, (adjusted_average, test_perf.get_remaining_seconds()))
 
-    def run(self):        
+    def run(self):
         test_results = self.test_run()
         init_avg = test_results[1][0]
         self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, self.small_file, init_avg=init_avg)
-        self.loading_complete_signal.emit(test_results)
+        self.test_run_finished_signal.emit(test_results)
         self.skim_reader.read()
 
     def new_close_inspection(self, address):

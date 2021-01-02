@@ -38,8 +38,7 @@ class SourceFile():
                 (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
         return result
 
-class InspectionModel(QtCore.QObject):
-
+class ChildInspection(QtCore.QObject):
     def __init__(self, id_tuple, sector_limit, prefix, estimate_fn):
         super().__init__()
         self.address = id_tuple[2]
@@ -70,6 +69,9 @@ class MainWindow(QWidget):
         super().__init__()
         self.setWindowTitle("recoverability")            
         current_thread().name = "GUI thread"  
+
+        self.job_thread = QtCore.QThread()
+        self.job = None
 
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
@@ -115,7 +117,6 @@ class MainWindow(QWidget):
 
         self.sector_average = QLabel()
 
-
         self.time = QtCore.QTime(0, 0, 0)
         self.time_label = QLabel()
         self.clock = QtCore.QTimer(self)
@@ -145,9 +146,6 @@ class MainWindow(QWidget):
         start_hbox.addLayout(init_address_hbox)
         start_hbox.addWidget(self.start_button)
 
-        #self.sector_average.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        #self.time_label.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-
         grid = QGridLayout()
         grid.setSpacing(50)
         grid.setContentsMargins(50, 50, 50, 50)
@@ -162,6 +160,7 @@ class MainWindow(QWidget):
 
         self.setLayout(grid)
 
+    @QtCore.pyqtSlot()
     def display_current_skim_address(self):
         if hasattr(self, 'job'):
         if not self.current_inspections:
@@ -172,6 +171,7 @@ class MainWindow(QWidget):
             self.skim_address_button.setText("Skim has not been started.")
         QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText('Display current address in skim'))
 
+    @QtCore.pyqtSlot()
     def draw_clock(self):
         if self.current_inspections:
             if self.current_slowest_inspection:
@@ -204,6 +204,7 @@ class MainWindow(QWidget):
             event.accept()
             sys.exit()
 
+    @QtCore.pyqtSlot(tuple)
     def new_skim_average(self, data):
         avg = data[0]
         estimate = data[1]
@@ -214,9 +215,10 @@ class MainWindow(QWidget):
         self.time.setHMS(0,0,0)
         self.time = self.time.addSecs(estimate)
 
+    @QtCore.pyqtSlot(tuple)
     def new_inspection_average(self, data):
-        id_str = data[1]
         avg = data[0]
+        id_str = data[1]
 
         self.current_inspections[id_str].avg = avg
         self.current_inspection_averages[id_str] = avg
@@ -231,6 +233,7 @@ class MainWindow(QWidget):
             del self.current_inspection_averages
             self.current_inspection_averages = {}
 
+    @QtCore.pyqtSlot(tuple)
     def initialize_inspection_gui(self, data):
         address = data[0]
         forward = data[1]
@@ -246,8 +249,8 @@ class MainWindow(QWidget):
 
         forward.perf.new_average_signal.connect(self.new_inspection_average)
         backward.perf.new_average_signal.connect(self.new_inspection_average)
-        forward_gui = InspectionModel(forward.id_tuple, forward.sector_limit, label_prefix, forward.perf.get_remaining_estimate)
-        backward_gui = InspectionModel(backward.id_tuple, backward.sector_limit, label_prefix, backward.perf.get_remaining_estimate)
+        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit, label_prefix, forward.perf.get_remaining_estimate)
+        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit, label_prefix, backward.perf.get_remaining_estimate)
 
         forward_gui.sibling = backward_gui
         backward_gui.sibling = forward_gui
@@ -279,10 +282,10 @@ class MainWindow(QWidget):
         forward.progress_signal.connect(forward_gui.update)
         backward.progress_signal.connect(backward_gui.update)
 
-        forward.finished_signal.connect(lambda success_rate: self.finish_inspection(forward_gui, success_rate))
-        backward.finished_signal.connect(lambda success_rate: self.finish_inspection(backward_gui, success_rate))
+        forward.finished_signal.connect(lambda success_rate: self.child_inspection_finished(forward_gui, success_rate))
+        backward.finished_signal.connect(lambda success_rate: self.child_inspection_finished(backward_gui, success_rate))
 
-    def finish_inspection(self, reader, success_rate):
+    def child_inspection_finished(self, reader, success_rate):
         reader.success_rate = success_rate
         reader.progress_bar.setParent(None)
         reader.label.setParent(None)
@@ -318,6 +321,7 @@ class MainWindow(QWidget):
                 pass
 
 
+    @QtCore.pyqtSlot()
     def start(self):
 
         def validate_hex(inp):
@@ -351,14 +355,13 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat("Loading...")
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
-        self.job_thread = QtCore.QThread()
         self.job = Job(self.selected_vol, self.file, validated_start_address)
         self.job.moveToThread(self.job_thread)
 
         self.job.success_signal.connect(self.file_gui_update)
-        self.job.finished_signal.connect(self.finished)
-        self.job.loading_progress_signal.connect(self.skim_progress_bar.setValue)
-        self.job.loading_complete_signal.connect(self.loading_finished)
+        self.job.finished_signal.connect(self.job_finished)
+        self.job.test_run_progress_signal.connect(self.skim_progress_bar.setValue)
+        self.job.test_run_finished_signal.connect(self.test_run_finished)
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
         self.job.skim_reader.resuming_signal.connect(lambda: self.skim_progress_bar.setTextVisible(False))
@@ -366,7 +369,8 @@ class MainWindow(QWidget):
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
 
-    def loading_finished(self, data):
+    @QtCore.pyqtSlot(tuple)
+    def test_run_finished(self, data):
         self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
         self.inspection_sample_size = data[0]
         self.skim_progress_bar.setTextVisible(False)
@@ -374,7 +378,8 @@ class MainWindow(QWidget):
         self.new_skim_average(data[1])
         self.clock.start(1000)
 
-    def finished(self, data):
+    @QtCore.pyqtSlot(tuple)
+    def job_finished(self, data):
         
         success = data[0]
         auto_filled = data[1]
@@ -397,6 +402,7 @@ class MainWindow(QWidget):
 
         self.close()
 
+    @QtCore.pyqtSlot(int)
     def file_gui_update(self, i):
         self.rebuilt_file_info.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
@@ -404,6 +410,7 @@ class MainWindow(QWidget):
         + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
         
+    @QtCore.pyqtSlot()
     def skim_gui_update(self):
         progress =  self.job.skim_reader.perf.sectors_read
         percent = 100 * progress / self.job.skim_reader.perf.total_sectors_to_read
