@@ -461,6 +461,8 @@ class MainWindow(QWidget):
                             the second element represents the number of meaningless sectors that were "auto-filled"
                             by the main program in the final reconstruction of the source file.
         """
+        self.showNormal()
+        self.showMinimized()
         success = data[0]
         auto_filled = data[1]
 
