@@ -254,7 +254,6 @@ class Job(QtCore.QObject):
         self.skim_reader.read()
 
     def new_close_inspection(self, address):
-        super().__init__()
         inspection_manipulation_mutex.acquire()
         forward = CloseReader(address)
         backward = CloseReader(address, True)
