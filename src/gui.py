@@ -38,23 +38,6 @@ class SourceFile():
                 (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
         return result
 
-class FinishedDialog(QMessageBox):
-    def __init__(self, success, path, portion_rebuilt, auto_filled, total_sectors):
-        super().__init__()
-        self.setWindowTitle('recoverability')
-        self.setIcon(QMessageBox.Warning)
-        if success:
-            if auto_filled > 0:
-            self.setText('Finished: output written to ' + path + '\n\n' + str(auto_filled) \
-                    + ' meaningless sectors were auto-filled (' + "{:.6f}".format(auto_filled / total_sectors) \
-                    + '%)')
-        else:
-                self.setText('Finished: output written to ' + path + '\n\n' \
-                    + 'No meaningless sectors were auto-filled.')
-        else:
-            self.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, or you have chosen a file that did not previously exist on the volume.\n\n' + "{:.2f}".format(100 * portion_rebuilt) + "% of the file was able to be reconstructed using data from this volume.")
-        self.setStandardButtons(QMessageBox.Ok)
-
 class InspectionModel(QtCore.QObject):
 
     def __init__(self, id_tuple, sector_limit, prefix, estimate_fn):
@@ -392,7 +375,26 @@ class MainWindow(QWidget):
         self.clock.start(1000)
 
     def finished(self, data):
-        FinishedDialog(data[0], self.job.rebuilt_file_path, (self.job.done_sectors / self.job.total_sectors), data[1], self.job.total_sectors).exec()
+        
+        success = data[0]
+        auto_filled = data[1]
+
+        finished_dialog = QMessageBox()
+        finished_dialog.setWindowTitle('recoverability')
+        finished_dialog.setIcon(QMessageBox.Warning)
+        if success:
+            if auto_filled > 0:
+                finished_dialog.setText('Finished: output written to ' + self.job.rebuilt_file_path + '\n\n' + str(auto_filled) \
+                    + ' meaningless sectors were auto-filled (' + "{:.6f}".format(auto_filled / self.job.total_sectors) \
+                    + '%)')
+            else:
+                finished_dialog.setText('Finished: output written to ' + self.job.rebuilt_file_path + '\n\n' \
+                    + 'No meaningless sectors were auto-filled.')
+        else:
+            finished_dialog.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, or you have chosen a file that did not previously exist on the volume.\n\n' + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) + "% of the file was able to be reconstructed using data from this volume.")
+        finished_dialog.setStandardButtons(QMessageBox.Ok)
+        finished_dialog.exec()
+
         self.close()
 
     def file_gui_update(self, i):
