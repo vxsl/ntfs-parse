@@ -10,7 +10,7 @@ from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
                             QVBoxLayout, QGroupBox
 
 # Local imports
-from recreate_file import Job, SECTOR_SIZE
+from recoverability import Job, SECTOR_SIZE
 
 inspection_gui_manipulation_mutex = Lock()
 
