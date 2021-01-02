@@ -15,6 +15,7 @@ from recreate_file import Job, SECTOR_SIZE
 inspection_gui_manipulation_mutex = Lock()
 
 class SourceFile():
+    """represents information about the user's selected file that is relevant to both the UI and the main program."""
     def __init__(self, path):
         self.remaining_sectors = self.to_sectors(path)
         self.address_table = [[] for _ in range(len(self.remaining_sectors))]
@@ -24,6 +25,17 @@ class SourceFile():
         self.name = split[len(split) - 1]
 
     def to_sectors(self, path):
+        """
+        splits the source file into a list of sectors
+
+        Args:
+            path (string): path to the source file
+
+        Returns:
+            list:   each element represents SECTOR_SIZE bytes
+                    (i.e. one sector) of the source file. The final sector
+                    is padded with zeroes to maintain uniform size.
+        """
         fobj = open(path, "rb")
         fobj.seek(0)
         result = []
@@ -39,6 +51,7 @@ class SourceFile():
         return result
 
 class ChildInspection(QtCore.QObject):
+    """Represents information relevant to the UI about a close inspection taking place in the main program"""
     def __init__(self, id_tuple, sector_limit, prefix, estimate_fn):
         super().__init__()
         self.address = id_tuple[2]
@@ -55,6 +68,12 @@ class ChildInspection(QtCore.QObject):
 
     @QtCore.pyqtSlot(tuple)
     def update(self, info):
+        """
+        update statistics about the close inspection.
+
+        Args:
+            info (tuple): info[0] indicates sectors read, info[1] indicates sectors matched
+        """
         self.progress_bar.setValue(100 * info[0] / self.sector_limit)
         if self.avg > 0:
             self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
@@ -65,10 +84,24 @@ class ChildInspection(QtCore.QObject):
                                 + '\nCalculating...')
 
 class MainWindow(QWidget):
+    """
+    This is the entrypoint and GUI for the main program.
+    Incorporates information regarding the source file, the overall skim,
+    and any close inspections that may be occurring. One input field to set
+    the address at which to begin the search.
+    """
     def __init__(self, selected_vol, path):
+        """
+        Main window constructor. Create all required widgets and layouts, then
+        add to the main layout.
+
+        Args:
+            selected_vol (string): the user's selected volume
+            path (string): path to the source file
+        """
         super().__init__()
-        self.setWindowTitle("recoverability")            
-        current_thread().name = "GUI thread"  
+        self.setWindowTitle("recoverability")
+        current_thread().name = "GUI thread"
 
         self.job_thread = QtCore.QThread()
         self.job = None
@@ -85,7 +118,7 @@ class MainWindow(QWidget):
         file_info.addWidget(QLabel('Size:'), 2, 0)
         file_info.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
         file_info_box.setLayout(file_info)
-        
+
         rebuilt_file_group_box = QGroupBox("Reconstructed file")
         rebuilt_file_hbox = QHBoxLayout()
         self.rebuilt_file_info = QLabel()
@@ -149,8 +182,8 @@ class MainWindow(QWidget):
         grid = QGridLayout()
         grid.setSpacing(50)
         grid.setContentsMargins(50, 50, 50, 50)
-        
-        grid.addLayout(files_hbox, 0, 0) 
+
+        grid.addLayout(files_hbox, 0, 0)
         grid.addWidget(skim_group_box, 4, 0)
         grid.addWidget(self.inspections_box, 5, 0)
         grid.addWidget(self.sector_average, 7, 0)
@@ -162,20 +195,29 @@ class MainWindow(QWidget):
 
     @QtCore.pyqtSlot()
     def display_current_skim_address(self):
+        """
+        Display the address of the most recently read sector during the overall skim.
+        If the skim is paused, (paused) is concatenated to the output.
+        """
         if hasattr(self, 'job'):
-        if not self.current_inspections:
-            self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()))
-        else:
-            self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
+            if not self.current_inspections:
+                self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()))
+            else:
+                self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
         else:
             self.skim_address_button.setText("Skim has not been started.")
         QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText('Display current address in skim'))
 
     @QtCore.pyqtSlot()
     def draw_clock(self):
+        """
+        Draw the "time remaining" timer. This method is called once every second.
+        Output corresponds to the overall skim or to the collection of
+        current close inspections, as appropriate.
+        """
         if self.current_inspections:
             if self.current_slowest_inspection:
-                self.time = self.time.addSecs(-1)                
+                self.time = self.time.addSecs(-1)
                 the_time = self.time.toString("h:mm:ss")
                 self.time_label.setText("Average time to parse " \
                     + str(len(self.current_inspections) * self.inspection_sample_size) \
@@ -185,27 +227,34 @@ class MainWindow(QWidget):
                 self.time_label.setText(self.time.toString("h:mm:ss") + \
                     " remaining in skim (paused)... calculating time remaining in close inspection(s).")
         else:
-            self.time = self.time.addSecs(-1)                
+            self.time = self.time.addSecs(-1)
             the_time = self.time.toString("h:mm:ss")
             self.time_label.setText(the_time + " remaining in skim")
-            
-    def closeEvent(self, event):
-        if hasattr(self, 'job'):
-        if not self.job.finished:
-            reply = QMessageBox.question(self, 'Window Close', 'Searching is not finished. Are you sure you want to close the window?',
-                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
-            if reply == QMessageBox.Yes:
-                event.accept()
-                sys.exit()
-            else:
-                event.ignore()
+    def closeEvent(self, event):
+        """Overridden method to warn the user about closing the window while still in progress."""
+        if hasattr(self, 'job'):
+            if not self.job.finished:
+                reply = QMessageBox.question(self, 'Window Close', 'Searching is not finished. Are you sure you want to close the window?',
+                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+                if reply == QMessageBox.Yes:
+                    event.accept()
+                    sys.exit()
+                else:
+                    event.ignore()
         else:
             event.accept()
             sys.exit()
 
     @QtCore.pyqtSlot(tuple)
     def new_skim_average(self, data):
+        """Update skim performance statistics in the main window
+
+        Args:
+            data (tuple):   first element is a float representing an average skimming time for some interval.
+                            second element is an int representing the estimated skim time remaining based on this average.
+        """
         avg = data[0]
         estimate = data[1]
         self.sector_average.setText("Average time to skim " \
@@ -217,6 +266,17 @@ class MainWindow(QWidget):
 
     @QtCore.pyqtSlot(tuple)
     def new_inspection_average(self, data):
+        """ Update inspection performance statistics in the main window.
+
+            Stores an individual inspection's performance data.
+            The slowest individual inspection dictates the overall inspection time remaining,
+            so once all current averages have been collected, a new estimated time is generated
+            and the UI is updated with that information.
+
+        Args:
+            data (tuple):   the first element is a float representing the average time for an inspection.
+                            the second element is the id string for this inspection.
+        """
         avg = data[0]
         id_str = data[1]
 
@@ -235,6 +295,14 @@ class MainWindow(QWidget):
 
     @QtCore.pyqtSlot(tuple)
     def initialize_inspection_gui(self, data):
+        """Create and initialize two new progress bars representing close inspections in the program.
+
+        Args:
+            data (tuple):   the first element is an int representing the decimal address of the close inspection's midpoint.
+                            the second and third elements are CloseReader objects passed from the main program. Attributes relevant
+                            to the UI are extracted, and the objects' signals are dynamically connected to the appropriate slots.
+        """
+
         address = data[0]
         forward = data[1]
         backward = data[2]
@@ -294,13 +362,13 @@ class MainWindow(QWidget):
             overall_success_rate = (reader.success_rate + reader.sibling.success_rate) / 2
             text = self.inspection_labels[reader.address].text()
             self.inspection_labels[reader.address].setText(text + " [" + "{:.2f}".format(overall_success_rate * 100) + "% success]")
-        
+
         inspection_gui_manipulation_mutex.acquire()
         del self.current_inspections[reader.id_str]
         inspection_gui_manipulation_mutex.release()
-        
-        label_list = [] 
-        for i in reversed(range(self.inspections_vbox.count())): 
+
+        label_list = []
+        for i in reversed(range(self.inspections_vbox.count())):
             try:
                 widget = self.inspections_vbox.itemAt(i).widget()
                 if isinstance(widget, QLabel) and "% success]" in widget.text():
@@ -308,7 +376,7 @@ class MainWindow(QWidget):
             except AttributeError:
                 pass
         label_list = label_list[:5]
-        for i in reversed(range(self.inspections_vbox.count())): 
+        for i in reversed(range(self.inspections_vbox.count())):
             try:
                 widget = self.inspections_vbox.itemAt(i).widget()
                 if isinstance(widget, QLabel) and "% success]" in widget.text():
@@ -325,16 +393,16 @@ class MainWindow(QWidget):
     def start(self):
 
         def validate_hex(inp):
-        try:
-            if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
-                self.start_button.setText('...')
-                self.start_button.setDisabled(True)
-                self.init_address_input.setDisabled(True)
-                return int(inp, 16)
-            else:
+            try:
+                if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
+                    self.start_button.setText('...')
+                    self.start_button.setDisabled(True)
+                    self.init_address_input.setDisabled(True)
+                    return int(inp, 16)
+                else:
+                    return None
+            except ValueError:
                 return None
-        except ValueError:
-            return None
 
         user_input = self.init_address_input.text()
         if not user_input:
@@ -348,7 +416,7 @@ class MainWindow(QWidget):
             msg.setInformativeText('Please enter a value between 0x0 and ' \
                 + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
             msg.setStandardButtons(QMessageBox.Ok)
-            msg.exec()  
+            msg.exec()
             return
 
         self.skim_progress_bar.setTextVisible(True)
@@ -365,12 +433,18 @@ class MainWindow(QWidget):
         self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
         self.job.skim_reader.resuming_signal.connect(lambda: self.skim_progress_bar.setTextVisible(False))
-        
+
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
 
     @QtCore.pyqtSlot(tuple)
     def test_run_finished(self, data):
+        """Carry out initialization tasks that require completion of the main program's "test run".
+
+        Args:
+            data (tuple):   the first element is the inspection sample size, dependent on the size of the source file.
+                            the second element is the projected skim average.
+        """
         self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
         self.inspection_sample_size = data[0]
         self.skim_progress_bar.setTextVisible(False)
@@ -380,7 +454,13 @@ class MainWindow(QWidget):
 
     @QtCore.pyqtSlot(tuple)
     def job_finished(self, data):
-        
+        """Display a dialog with final statistics about the main program's execution, then exit.
+
+        Args:
+            data (tuple):   the first element represents the boolean success of the main program.
+                            the second element represents the number of meaningless sectors that were "auto-filled"
+                            by the main program in the final reconstruction of the source file.
+        """
         success = data[0]
         auto_filled = data[1]
 
@@ -404,16 +484,22 @@ class MainWindow(QWidget):
 
     @QtCore.pyqtSlot(int)
     def file_gui_update(self, i):
+        """Update information shown in the "Reconstructed file" area of the main window.
+
+        Args:
+            i (int): last matched sector of source file
+        """
         self.rebuilt_file_info.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
         + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
         + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
-        
+
     @QtCore.pyqtSlot()
     def skim_gui_update(self):
+        """Update information shown in the "Skim" area of the main window."""
         progress =  self.job.skim_reader.perf.sectors_read
         percent = 100 * progress / self.job.skim_reader.perf.total_sectors_to_read
         self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
-        
+
