@@ -7,19 +7,22 @@ from PyQt5 import QtCore
 from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
                             QLabel, QLineEdit, QPushButton, \
                             QWidget, QProgressBar, QMessageBox, \
-                            QVBoxLayout, QGroupBox
+                            QVBoxLayout, QGroupBox, QGraphicsScene, \
+                            QGraphicsProxyWidget, QGraphicsView
 
 # Local imports
 from recoverability import Job, SECTOR_SIZE
 
-inspection_gui_manipulation_mutex = Lock()
-
 class SourceFile():
     """represents information about the user's selected file that is relevant to both the UI and the main program."""
     def __init__(self, path):
+        # the remaining sectors list will start as a list where each element represents a sector in the source file.
         self.remaining_sectors = self.to_sectors(path)
+
+        # the address table will start as a list of empty lists
         self.address_table = [[] for _ in range(len(self.remaining_sectors))]
-        #self.remaining_sectors = copy.deepcopy(self.sectors)
+
+        # separate path into file and location
         split = path.split('/')
         self.dir = '/'.join(split[0:(len(split) - 1)])
         self.name = split[len(split) - 1]
@@ -40,50 +43,84 @@ class SourceFile():
         fobj.seek(0)
         result = []
         while True:
+            # read SECTOR_SIZE bytes
             cur = fobj.read(SECTOR_SIZE)
             if cur == b'':
+                # finish at EOF
                 break
             elif len(cur) == SECTOR_SIZE:
+                # populate list with an element representing SECTOR_SIZE bytes 
                 result.append(cur)
-            else:
+            else:      
+                # zfill for final sector -- to achieve uniform sector length even
+                # when the data is less than SECTOR_SIZE          
                 result.append(\
-                (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))   #trailing sector zfill
+                (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))  
         return result
 
 class ChildInspection(QtCore.QObject):
     """Represents information relevant to the UI about a close inspection taking place in the main program"""
-    def __init__(self, id_tuple, sector_limit, prefix, estimate_fn):
+    def __init__(self, id_tuple, sector_limit, estimate_fn):
+        """Construct a ChildInspection object.
+
+        Args:
+            id_tuple (tuple):   first element is a string describing the direction of the child inspection ("forward" or "backward") 
+                                second element is the decimal midpoint of the parent inspection (int)
+                                third element is the same address in hexidecimal (string)
+            sector_limit (int): the total number of sectors that the child inspection will read before stopping
+            estimate_fn (callable): this will be a pointer to some InspectionPerformanceCalc object's get_remaining_estimate() method.
+                                    in order to call this function only on the slowest child inspection, it is stored as a member so that this
+                                    evaluation may be made later, once the slowest object in current_inspections is determined. 
+        """        
         super().__init__()
+
+        # identification
         self.address = id_tuple[2]
-        self.finished = False
-        self.sibling = None
         self.id_str = id_tuple[0] + id_tuple[2]
+        
+        # gui
+        self.label = QLabel(id_tuple[2])
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
-        self.label = QLabel(prefix)
-        self.label.setStyleSheet("font-weight: bold")
+        if id_tuple[0] == 'backward':
+            self.backwards = True
+            self.graphics_view = QGraphicsView()
+            self.scene = QGraphicsScene()
+            self.proxy = self.scene.addWidget(self.progress_bar)
+            self.proxy.setRotation(180)    
+            self.proxy.setPos
+        else:
+            self.backwards = False
+
+        # logic
+        self.new_avg_flag = False
+        self.finished = False
+        self.sibling = None
         self.sector_limit = sector_limit
         self.avg = 0
-        self.estimate_fn = estimate_fn
+        self.estimate_fn = estimate_fn  
 
     @QtCore.pyqtSlot(tuple)
     def update(self, info):
-        """
-        update statistics about the close inspection.
+        """update information about the close inspection taking place in the main program.
 
         Args:
             info (tuple): info[0] indicates sectors read, info[1] indicates sectors matched
         """
+        # update the child inpsection's progress bar
         self.progress_bar.setValue(100 * info[0] / self.sector_limit)
-        if self.avg > 0:
-            self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
-                                + '\n' + '{:.4f}'.format(100 * info[1] / info[0]) \
-                                + "% success")
-        else:
-            self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
-                                + '\nCalculating...')
+
+        # update the child inspection's info text, ex.
+        # "1023/42423 sectors
+        # 97.7531% success"
+        self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
+                            + '\n' + '{:.4f}'.format(100 * info[1] / info[0]) \
+                            + "% success")
 
 class MainWindow(QWidget):
+
+    request_skim_average_signal = QtCore.pyqtSignal()
+
     """
     This is the entrypoint and GUI for the main program.
     Incorporates information regarding the source file, the overall skim,
@@ -101,41 +138,49 @@ class MainWindow(QWidget):
         """
         super().__init__()
         self.setWindowTitle("recoverability")
-        current_thread().name = "GUI thread"
 
+        # create QThread for main program, to be started later
         self.job_thread = QtCore.QThread()
         self.job = None
 
+        # store information from previous dialog
         self.file = SourceFile(path)
         self.selected_vol = selected_vol
 
-        file_info_box = QGroupBox("Source file")
-        file_info = QGridLayout()
-        file_info.addWidget(QLabel('Name:'), 0, 0)
-        file_info.addWidget(QLabel(self.file.name), 0, 1)
-        file_info.addWidget(QLabel('Location:'), 1, 0)
-        file_info.addWidget(QLabel(self.file.dir), 1, 1)
-        file_info.addWidget(QLabel('Size:'), 2, 0)
-        file_info.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
-        file_info_box.setLayout(file_info)
+        # begin creating UI elements. Those that will need to be accessed or modified elsewhere in the program
+        # are stored as attributes to the MainWindow object.
 
-        rebuilt_file_group_box = QGroupBox("Reconstructed file")
-        rebuilt_file_hbox = QHBoxLayout()
-        self.rebuilt_file_info = QLabel()
-        self.rebuilt_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.rebuilt_file_info.setText(("Last match: (none)\n\n") \
+        # create and populate the "Source file" group box
+        source_file_box = QGroupBox("Source file")
+        source_file_grid = QGridLayout()
+        source_file_grid.addWidget(QLabel('Name:'), 0, 0)
+        source_file_grid.addWidget(QLabel(self.file.name), 0, 1)
+        source_file_grid.addWidget(QLabel('Location:'), 1, 0)
+        source_file_grid.addWidget(QLabel(self.file.dir), 1, 1)
+        source_file_grid.addWidget(QLabel('Size:'), 2, 0)
+        source_file_grid.addWidget(QLabel(str(len(self.file.remaining_sectors)) + " sectors"), 2, 1)
+        source_file_box.setLayout(source_file_grid)
+
+        # create and populate the "Reconstructed file" group box
+        reconstructed_file_box = QGroupBox("Reconstructed file")
+        reconstructed_file_hbox = QHBoxLayout()
+        self.reconstructed_file_info = QLabel()
+        self.reconstructed_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.reconstructed_file_info.setText(("Last match: (none)\n\n") \
         + ("0/" + (str(len(self.file.remaining_sectors))) \
         + " = " + "0.00%" \
         + "\n\nTesting equality for " + (str(len(self.file.remaining_sectors))) \
         + " remaining sectors..."))
-        rebuilt_file_hbox.addWidget(self.rebuilt_file_info)
-        rebuilt_file_group_box.setLayout(rebuilt_file_hbox)
+        reconstructed_file_hbox.addWidget(self.reconstructed_file_info)
+        reconstructed_file_box.setLayout(reconstructed_file_hbox)
 
-        files_hbox = QHBoxLayout()
-        files_hbox.addWidget(file_info_box)
-        files_hbox.addWidget(rebuilt_file_group_box)
+        # place the previous two group boxes next to each other in an Hbox
+        files_row = QHBoxLayout()
+        files_row.addWidget(source_file_box)
+        files_row.addWidget(reconstructed_file_box)
 
-        skim_group_box = QGroupBox("Skim")
+        # create and populate the "Skim" group box
+        skim_box = QGroupBox("Skim")
         skim_grid = QGridLayout()
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
@@ -146,52 +191,54 @@ class MainWindow(QWidget):
         skim_grid.addWidget(self.skim_progress_bar, 0, 0, 1, 3)
         skim_grid.addWidget(self.skim_percentage, 1, 2)
         skim_grid.addWidget(self.skim_address_button, 1, 0)
-        skim_group_box.setLayout(skim_grid)
+        skim_box.setLayout(skim_grid)
 
+        # create and populate the performance information near the bottom of the window.
         self.sector_average = QLabel()
-
         self.time = QtCore.QTime(0, 0, 0)
         self.time_label = QLabel()
         self.clock = QtCore.QTimer(self)
         self.clock.timeout.connect(self.draw_clock)
 
-        self.inspection_labels = {}
-        self.current_inspections = {}
-        self.current_inspection_averages = {}
-        self.current_slowest_inspection = None
-        self.inspection_sample_size = None
-
+        # create and populate the "Close inspections" group box, which will initially be hidden from view
         self.inspections_box = QGroupBox("Close inspections")
         self.inspections_vbox = QVBoxLayout()
         self.inspections_box.setLayout(self.inspections_vbox)
         self.inspections_box.hide()
+        self.inspection_labels = {}
+        self.backwards_progress_bars = []
 
+        # prepare inspection logic
+        self.current_inspections = {}
+        self.current_slowest_inspection = None
+        self.inspection_sample_size = None
+        
+        # create and populate the final row, with a start button and hex input
         start_hbox = QHBoxLayout()
-
         self.start_button = QPushButton('Start')
         self.start_button.clicked.connect(self.start)
-
         self.init_address_input = QLineEdit()
         self.init_address_input.setPlaceholderText('Begin at address (default 0x0000000000)')
         init_address_hbox = QHBoxLayout()
         init_address_hbox.addWidget(self.init_address_input)
-
         start_hbox.addLayout(init_address_hbox)
         start_hbox.addWidget(self.start_button)
 
+        # add all above widgets and layouts to an overall grid
         grid = QGridLayout()
-        grid.setSpacing(50)
-        grid.setContentsMargins(50, 50, 50, 50)
-
-        grid.addLayout(files_hbox, 0, 0)
-        grid.addWidget(skim_group_box, 4, 0)
+        grid.addLayout(files_row, 0, 0)
+        grid.addWidget(skim_box, 4, 0)
         grid.addWidget(self.inspections_box, 5, 0)
         grid.addWidget(self.sector_average, 7, 0)
         grid.addWidget(self.time_label, 8, 0)
-
         grid.addLayout(start_hbox, 9, 0)
-
+        
+        # overall layout options        
+        grid.setSpacing(50)
+        grid.setContentsMargins(50, 50, 50, 50)
         self.setLayout(grid)
+
+        self.cur_secs = 0
 
     @QtCore.pyqtSlot()
     def display_current_skim_address(self):
@@ -206,7 +253,17 @@ class MainWindow(QWidget):
                 self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
         else:
             self.skim_address_button.setText("Skim has not been started.")
+
+        # QTimer singleshot resets button text after 2 seconds
         QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText('Display current address in skim'))
+
+    def request_averages(self):
+        if self.current_inspections:
+            pass
+            return
+        else:
+            self.job.skim_reader.perf.calculate_average()
+
 
     @QtCore.pyqtSlot()
     def draw_clock(self):
@@ -215,6 +272,11 @@ class MainWindow(QWidget):
         Output corresponds to the overall skim or to the collection of
         current close inspections, as appropriate.
         """
+        self.cur_secs += 1
+        if self.cur_secs >= 5:
+            self.cur_secs = 0
+            self.request_averages()
+            
         if self.current_inspections:
             if self.current_slowest_inspection:
                 self.time = self.time.addSecs(-1)
@@ -247,6 +309,19 @@ class MainWindow(QWidget):
             event.accept()
             sys.exit()
 
+    def resizeEvent(self, event):
+        for key in self.current_inspections:
+            insp = self.current_inspections[key]
+            if insp.backwards:
+                width = insp.graphics_view.width()
+                insp.progress_bar.setMaximumWidth(width)
+                insp.progress_bar.setMinimumWidth(width)
+                insp.graphics_view.fitInView(insp.scene.sceneRect())
+                print('\n' + str(insp.progress_bar.width()))
+                print(width)
+                print(insp.scene.width())
+                print(insp.scene.sceneRect())
+
     @QtCore.pyqtSlot(tuple)
     def new_skim_average(self, data):
         """Update skim performance statistics in the main window
@@ -257,10 +332,12 @@ class MainWindow(QWidget):
         """
         avg = data[0]
         estimate = data[1]
-        self.sector_average.setText("Average time to skim " \
+        """ self.sector_average.setText("Average time to skim " \
             + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size) + " sectors (" \
             + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size * 512 / 1000000) \
-            + " MB): {:.2f}".format(avg) + " seconds")
+            + " MB): {:.2f}".format(avg) + " seconds") """
+        self.sector_average.setText("Average sectors skimmed in 5 seconds: "
+            + str(int(avg)))
         self.time.setHMS(0,0,0)
         self.time = self.time.addSecs(estimate)
 
@@ -268,7 +345,7 @@ class MainWindow(QWidget):
     def new_inspection_average(self, data):
         """ Update inspection performance statistics in the main window.
 
-            Stores an individual inspection's performance data.
+            Stores an individual inspection's performance data in a dictionary.
             The slowest individual inspection dictates the overall inspection time remaining,
             so once all current averages have been collected, a new estimated time is generated
             and the UI is updated with that information.
@@ -281,17 +358,28 @@ class MainWindow(QWidget):
         id_str = data[1]
 
         self.current_inspections[id_str].avg = avg
-        self.current_inspection_averages[id_str] = avg
-        if len(self.current_inspection_averages) == len(self.current_inspections):
-            slowest = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
-            secs = self.current_inspections[slowest].estimate_fn()
-            if secs == '...':
+        self.current_inspections[id_str].new_avg_flag = True
+
+        # if fresh averages have been collected for all current inspections,
+        if all(self.current_inspections[key].new_avg_flag == True for key in self.current_inspections):
+            # determine the slowest inspection
+            slowest_id = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
+            self.current_slowest_inspection = self.current_inspections[slowest_id]
+
+            # get the estimated seconds remaining in that inspection 
+            secs_remaining = self.current_inspections[slowest_id].estimate_fn()
+
+            # quit if no estimate is possible yet
+            if secs_remaining == '...':
                 return
-            self.current_slowest_inspection = self.current_inspections[slowest]
+        
+            # update time remaining by resetting to 0 then adding the new estimate
             self.time.setHMS(0,0,0)
-            self.time = self.time.addSecs(secs)
-            del self.current_inspection_averages
-            self.current_inspection_averages = {}
+            self.time = self.time.addSecs(secs_remaining)
+
+            # clear the averages for the next round
+            for key in self.current_inspections:
+                self.current_inspections[key].new_avg_flag = False
 
     @QtCore.pyqtSlot(tuple)
     def initialize_inspection_gui(self, data):
@@ -310,42 +398,45 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setTextVisible(True)
         self.skim_progress_bar.setFormat("Paused")
 
-        inspection_gui_manipulation_mutex.acquire()
-        label_prefix = hex(address)
-        self.inspection_labels[label_prefix] = QLabel(label_prefix)
-        self.inspection_labels[label_prefix].setStyleSheet("font-weight: bold")
 
         forward.perf.new_average_signal.connect(self.new_inspection_average)
         backward.perf.new_average_signal.connect(self.new_inspection_average)
-        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit, label_prefix, forward.perf.get_remaining_estimate)
-        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit, label_prefix, backward.perf.get_remaining_estimate)
+        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit, forward.perf.get_remaining_estimate)
+        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit, backward.perf.get_remaining_estimate)
 
         forward_gui.sibling = backward_gui
         backward_gui.sibling = forward_gui
 
         bars = QHBoxLayout()
 
+        # add backward to layout
+        box = QVBoxLayout()
+        #graphics_view = QGraphicsView(self)
+        graphics_view = backward_gui.graphics_view
+        graphics_view.setScene(backward_gui.scene)
+        graphics_view.setStyleSheet("border:none; background: transparent")
+        graphics_view.setStyleSheet("height:0px")
+        box.addWidget(graphics_view)        
+        box.addWidget(backward_gui.label)
+        bars.addLayout(box)
+
         # add forward to layout
         box = QVBoxLayout()
         box.addWidget(forward_gui.progress_bar)
         box.addWidget(forward_gui.label)
         bars.addLayout(box)
-
-        # add backward to layout
-        box = QVBoxLayout()
-        box.addWidget(backward_gui.progress_bar)
-        box.addWidget(backward_gui.label)
-        bars.addLayout(box)
-
-        self.inspections_vbox.addWidget(self.inspection_labels[label_prefix])
+        self.inspection_labels[hex(address)] = QLabel(hex(address))
+        self.inspection_labels[hex(address)].setStyleSheet("font-weight: bold")
+        self.inspections_vbox.addWidget(self.inspection_labels[hex(address)])
         self.inspections_vbox.addLayout(bars)
-
         self.inspections_box.show()
+        #backward_gui.progress_bar.setStyleSheet("width:" + str(graphics_view.width()) + "px")
+
+        backward_gui.progress_bar.setMinimumWidth(graphics_view.width())
+        backward_gui.progress_bar.setMaximumWidth(graphics_view.width())
 
         self.current_inspections[forward_gui.id_str] = forward_gui
         self.current_inspections[backward_gui.id_str] = backward_gui
-
-        inspection_gui_manipulation_mutex.release()
 
         forward.progress_signal.connect(forward_gui.update)
         backward.progress_signal.connect(backward_gui.update)
@@ -361,17 +452,15 @@ class MainWindow(QWidget):
         if reader.sibling.finished:
             overall_success_rate = (reader.success_rate + reader.sibling.success_rate) / 2
             text = self.inspection_labels[reader.address].text()
-            self.inspection_labels[reader.address].setText(text + " [" + "{:.2f}".format(overall_success_rate * 100) + "% success]")
+            self.inspection_labels[reader.address].setText(text + " [completed, " + "{:.2f}".format(overall_success_rate * 100) + "% success]")
 
-        inspection_gui_manipulation_mutex.acquire()
         del self.current_inspections[reader.id_str]
-        inspection_gui_manipulation_mutex.release()
 
         label_list = []
         for i in reversed(range(self.inspections_vbox.count())):
             try:
                 widget = self.inspections_vbox.itemAt(i).widget()
-                if isinstance(widget, QLabel) and "% success]" in widget.text():
+                if isinstance(widget, QLabel) and "completed" in widget.text():
                     label_list.append(widget)
             except AttributeError:
                 pass
@@ -379,7 +468,7 @@ class MainWindow(QWidget):
         for i in reversed(range(self.inspections_vbox.count())):
             try:
                 widget = self.inspections_vbox.itemAt(i).widget()
-                if isinstance(widget, QLabel) and "% success]" in widget.text():
+                if isinstance(widget, QLabel) and "completed" in widget.text():
                     if widget in label_list:
                         widget.show()
                         widget.setStyleSheet("")
@@ -451,7 +540,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat(None)
         self.new_skim_average(data[1])
         self.clock.start(1000)
-
+    
     @QtCore.pyqtSlot(tuple)
     def job_finished(self, data):
         """Display a dialog with final statistics about the main program's execution, then exit.
@@ -491,17 +580,16 @@ class MainWindow(QWidget):
         Args:
             i (int): last matched sector of source file
         """
-        self.rebuilt_file_info.setText(("Last match: sector " + str(i) + "\n\n") \
+        self.reconstructed_file_info.setText(("Last match: sector " + str(i) + "\n\n") \
         + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
         + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
         + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
         + " remaining sectors..."))
 
-    @QtCore.pyqtSlot()
-    def skim_gui_update(self):
+    @QtCore.pyqtSlot(float)
+    def skim_gui_update(self, progress):
         """Update information shown in the "Skim" area of the main window."""
-        progress =  self.job.skim_reader.perf.sectors_read
-        percent = 100 * progress / self.job.skim_reader.perf.total_sectors_to_read
+        percent = 100 * progress
         self.skim_percentage.setText("{:.8f}".format(percent) + "%")
         self.skim_progress_bar.setValue(percent)
 
