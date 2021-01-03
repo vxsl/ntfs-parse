@@ -11,7 +11,7 @@ from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
                             QGraphicsProxyWidget, QGraphicsView
 
 # Local imports
-from recoverability import Job, SECTOR_SIZE
+from recoverability import Job, SECTOR_SIZE, SAMPLE_WINDOW
 
 class SourceFile():
     """represents information about the user's selected file that is relevant to both the UI and the main program."""
@@ -211,7 +211,6 @@ class MainWindow(QWidget):
         # prepare inspection logic
         self.current_inspections = {}
         self.current_slowest_inspection = None
-        self.inspection_sample_size = None
         
         # create and populate the final row, with a start button and hex input
         start_hbox = QHBoxLayout()
@@ -273,12 +272,12 @@ class MainWindow(QWidget):
         current close inspections, as appropriate.
         """
         self.cur_secs += 1
-        if self.cur_secs >= 5:
+        if self.cur_secs >= SAMPLE_WINDOW:
             self.cur_secs = 0
             self.request_averages()
             
         if self.current_inspections:
-            if self.current_slowest_inspection:
+            """ if self.current_slowest_inspection:
                 self.time = self.time.addSecs(-1)
                 the_time = self.time.toString("h:mm:ss")
                 self.time_label.setText("Average time to parse " \
@@ -287,7 +286,8 @@ class MainWindow(QWidget):
                     + " s\n" + the_time + " remaining to finish current close inspections.\n")
             else:
                 self.time_label.setText(self.time.toString("h:mm:ss") + \
-                    " remaining in skim (paused)... calculating time remaining in close inspection(s).")
+                    " remaining in skim (paused)... calculating time remaining in close inspection(s).") """
+            pass
         else:
             self.time = self.time.addSecs(-1)
             the_time = self.time.toString("h:mm:ss")
@@ -330,12 +330,8 @@ class MainWindow(QWidget):
             data (tuple):   first element is a float representing an average skimming time for some interval.
                             second element is an int representing the estimated skim time remaining based on this average.
         """
-        avg = data[0]
+        avg = data[0] * self.job.jump_sectors
         estimate = data[1]
-        """ self.sector_average.setText("Average time to skim " \
-            + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size) + " sectors (" \
-            + str(self.job.skim_reader.perf.sample_size * self.job.skim_reader.perf.jump_size * 512 / 1000000) \
-            + " MB): {:.2f}".format(avg) + " seconds") """
         self.sector_average.setText("Average sectors skimmed in 5 seconds: "
             + str(int(avg)))
         self.time.setHMS(0,0,0)
@@ -535,10 +531,9 @@ class MainWindow(QWidget):
                             the second element is the projected skim average.
         """
         self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
-        self.inspection_sample_size = data[0]
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
-        self.new_skim_average(data[1])
+        self.new_skim_average(data)
         self.clock.start(1000)
     
     @QtCore.pyqtSlot(tuple)
