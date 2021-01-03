@@ -76,10 +76,9 @@ class CloseReader(DiskReader):
         self.perf = InspectionPerformanceCalc(self.sector_limit, self.id_tuple[0] + self.id_tuple[2])
 
     def read(self):
-        debug_this_thread()
+        #debug_this_thread()
         current_thread().name = self.id_tuple[0] + self.id_tuple[2]
         self.fobj.seek(self.start_at)
-        self.perf.start()
         for _ in range(self.sector_limit):
             data = self.fobj.read(SECTOR_SIZE)
             if job.finished or not data:
@@ -116,8 +115,7 @@ class CloseReader(DiskReader):
         return
 
     def emit_progress(self):
-        self.perf.increment()
-        self.progress_signal.emit((self.sector_count, self.success_count))
+        self.progress_signal.emit((self.perf.increment(), self.success_count / self.sector_count))
 
 class SkimReader(DiskReader):
 
@@ -216,7 +214,7 @@ class Job(QtCore.QObject):
 
 
     def test_run(self):
-        debug_this_thread()
+        #debug_this_thread()
         def fake_fn(inp):
             _  = [i for i, sector in enumerate(job.file.remaining_sectors) if sector == inp]
 

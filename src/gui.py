@@ -60,7 +60,7 @@ class SourceFile():
 
 class ChildInspection(QtCore.QObject):
     """Represents information relevant to the UI about a close inspection taking place in the main program"""
-    def __init__(self, id_tuple, sector_limit, estimate_fn):
+    def __init__(self, id_tuple, sector_limit, average_fn, seconds_fn):
         """Construct a ChildInspection object.
 
         Args:
@@ -68,7 +68,7 @@ class ChildInspection(QtCore.QObject):
                                 second element is the decimal midpoint of the parent inspection (int)
                                 third element is the same address in hexidecimal (string)
             sector_limit (int): the total number of sectors that the child inspection will read before stopping
-            estimate_fn (callable): this will be a pointer to some InspectionPerformanceCalc object's get_remaining_estimate() method.
+            seconds_fn (callable): this will be a pointer to some InspectionPerformanceCalc object's get_remaining_seconds() method.
                                     in order to call this function only on the slowest child inspection, it is stored as a member so that this
                                     evaluation may be made later, once the slowest object in current_inspections is determined. 
         """        
@@ -82,15 +82,6 @@ class ChildInspection(QtCore.QObject):
         self.label = QLabel(id_tuple[2])
         self.progress_bar = QProgressBar()
         self.progress_bar.setTextVisible(False)
-        if id_tuple[0] == 'backward':
-            self.backwards = True
-            self.graphics_view = QGraphicsView()
-            self.scene = QGraphicsScene()
-            self.proxy = self.scene.addWidget(self.progress_bar)
-            self.proxy.setRotation(180)    
-            self.proxy.setPos
-        else:
-            self.backwards = False
 
         # logic
         self.new_avg_flag = False
@@ -98,23 +89,24 @@ class ChildInspection(QtCore.QObject):
         self.sibling = None
         self.sector_limit = sector_limit
         self.avg = 0
-        self.estimate_fn = estimate_fn  
+        self.average_fn = average_fn
+        self.seconds_fn = seconds_fn  
 
     @QtCore.pyqtSlot(tuple)
     def update(self, info):
         """update information about the close inspection taking place in the main program.
 
         Args:
-            info (tuple): info[0] indicates sectors read, info[1] indicates sectors matched
+            info (tuple): info[0] indicates portion of sectors read, info[1] indicates sectors matched
         """
         # update the child inpsection's progress bar
-        self.progress_bar.setValue(100 * info[0] / self.sector_limit)
+        self.progress_bar.setValue(100 * info[0])
 
         # update the child inspection's info text, ex.
         # "1023/42423 sectors
         # 97.7531% success"
-        self.label.setText(str(info[0]) + '/' + str(self.sector_limit) \
-                            + '\n' + '{:.4f}'.format(100 * info[1] / info[0]) \
+        self.label.setText('{:.3f}'.format(100 * info[0]) + '% complete' \
+                            + '\n' + '{:.3f}'.format(100 * info[1]) \
                             + "% success")
 
 class MainWindow(QWidget):
@@ -166,7 +158,7 @@ class MainWindow(QWidget):
         reconstructed_file_hbox = QHBoxLayout()
         self.reconstructed_file_info = QLabel()
         self.reconstructed_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.reconstructed_file_info.setText(("Last match: (none)\n\n") \
+        self.reconstructed_file_info.setText(("No matches\n\n") \
         + ("0/" + (str(len(self.file.remaining_sectors))) \
         + " = " + "0.00%" \
         + "\n\nTesting equality for " + (str(len(self.file.remaining_sectors))) \
@@ -244,6 +236,7 @@ class MainWindow(QWidget):
         Display the address of the most recently read sector during the overall skim.
         If the skim is paused, (paused) is concatenated to the output.
         """
+        # TODO create blocking condition for rapid clicks
         if hasattr(self, 'job'):
             if not self.current_inspections:
                 self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()))
@@ -256,11 +249,39 @@ class MainWindow(QWidget):
         QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText('Display current address in skim'))
 
     def request_averages(self):
-        if self.current_inspections:
-            pass
+        """.. . . . . ..  . and Update skim performance statistics in the main window
+        """        
+        if not self.current_inspections:
+            data = self.job.skim_reader.perf.calculate_average()
+            # first element is a float representing an average skimming time for some interval.
+            # second element is an int representing the estimated skim time remaining based on this average.
+            avg = data[0] * self.job.jump_sectors
+            estimate = data[1]
+            self.sector_average.setText("Average sectors skimmed in " + str(SAMPLE_WINDOW) + " seconds: "
+                + str(int(avg)))
+            self.time.setHMS(0,0,0)
+            self.time = self.time.addSecs(estimate)
             return
-        else:
-            self.job.skim_reader.perf.calculate_average()
+
+        for key in self.current_inspections:
+            insp = self.current_inspections[key]
+            insp.avg = insp.average_fn()
+            
+        # now that fresh averages have been collected for all current inspections,
+        # determine the slowest inspection
+        slowest_id = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
+        self.current_slowest_inspection = self.current_inspections[slowest_id]
+
+        # get the estimated seconds remaining in that inspection 
+        secs_remaining = self.current_slowest_inspection.seconds_fn()
+
+        # quit if no estimate is possible yet
+        if secs_remaining == '...':
+            return
+    
+        # update time remaining by resetting to 0 then adding the new estimate
+        self.time.setHMS(0,0,0)
+        self.time = self.time.addSecs(secs_remaining)
 
 
     @QtCore.pyqtSlot()
@@ -276,17 +297,16 @@ class MainWindow(QWidget):
             self.request_averages()
             
         if self.current_inspections:
-            """ if self.current_slowest_inspection:
+            if self.current_slowest_inspection:
                 self.time = self.time.addSecs(-1)
                 the_time = self.time.toString("h:mm:ss")
-                self.time_label.setText("Average time to parse " \
-                    + str(len(self.current_inspections) * self.inspection_sample_size) \
-                    + "+ sectors: " + "{:.2f}".format(self.current_slowest_inspection.avg) \
-                    + " s\n" + the_time + " remaining to finish current close inspections.\n")
+                self.time_label.setText("Average sectors parsed in " + \
+                    str(SAMPLE_WINDOW) + " seconds: " + \
+                    "{:.2f}".format(self.current_slowest_inspection.avg) + \
+                    "\n" + the_time + " remaining to finish current close inspections.\n")
             else:
                 self.time_label.setText(self.time.toString("h:mm:ss") + \
-                    " remaining in skim (paused)... calculating time remaining in close inspection(s).") """
-            pass
+                    " remaining in skim (paused)... calculating time remaining in close inspection(s).")
         else:
             self.time = self.time.addSecs(-1)
             the_time = self.time.toString("h:mm:ss")
@@ -325,11 +345,8 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setTextVisible(True)
         self.skim_progress_bar.setFormat("Paused")
 
-
-        forward.perf.new_average_signal.connect(self.new_inspection_average)
-        backward.perf.new_average_signal.connect(self.new_inspection_average)
-        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit, forward.perf.get_remaining_estimate)
-        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit, backward.perf.get_remaining_estimate)
+        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit, forward.perf.calculate_average, forward.perf.get_remaining_seconds)
+        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit, backward.perf.calculate_average, backward.perf.get_remaining_seconds)
 
         forward_gui.sibling = backward_gui
         backward_gui.sibling = forward_gui
@@ -401,6 +418,7 @@ class MainWindow(QWidget):
     def start(self):
 
         def validate_hex(inp):
+            # TODO check for valid fobj seek with addr
             try:
                 if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
                     self.start_button.setText('...')
@@ -415,6 +433,7 @@ class MainWindow(QWidget):
         user_input = self.init_address_input.text()
         if not user_input:
             self.init_address_input.setText('0x00000000')
+            self.init_address_input.setText('0x3982113c00')
             user_input = self.init_address_input.text()
         validated_start_address = validate_hex(user_input)
         if validated_start_address is None:
@@ -453,10 +472,10 @@ class MainWindow(QWidget):
             data (tuple):   the first element is the inspection sample size, dependent on the size of the source file.
                             the second element is the projected skim average.
         """
-        self.job.skim_reader.perf.new_average_signal.connect(self.new_skim_average)
         self.skim_progress_bar.setTextVisible(False)
         self.skim_progress_bar.setFormat(None)
-        self.new_skim_average(data)
+        #self.new_skim_average(data)
+        self.cur_secs = 6
         self.clock.start(1000)
     
     @QtCore.pyqtSlot(tuple)
