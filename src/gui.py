@@ -1,6 +1,8 @@
 # Standard library imports
 from threading import current_thread, Lock
 from shutil import disk_usage
+from multiprocessing import cpu_count
+import time
 import sys
 # Third-party imports
 from PyQt5 import QtCore
@@ -11,7 +13,10 @@ from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
                             QGraphicsProxyWidget, QGraphicsView
 
 # Local imports
-from recoverability import Job, SECTOR_SIZE, SAMPLE_WINDOW
+from recoverability import Job, Worker, SECTOR_SIZE, SAMPLE_WINDOW
+
+threadpool = QtCore.QThreadPool.globalInstance()
+threadpool.setMaxThreadCount(cpu_count() - 3)
 
 class SourceFile():
     """represents information about the user's selected file that is relevant to both the UI and the main program."""
@@ -294,7 +299,7 @@ class MainWindow(QWidget):
         self.cur_secs += 1
         if self.cur_secs >= SAMPLE_WINDOW:
             self.cur_secs = 0
-            self.request_averages()
+            threadpool.start(Worker(self.request_averages))           
             
         if self.current_inspections:
             if self.current_slowest_inspection:
@@ -337,7 +342,6 @@ class MainWindow(QWidget):
                             the second and third elements are CloseReader objects passed from the main program. Attributes relevant
                             to the UI are extracted, and the objects' signals are dynamically connected to the appropriate slots.
         """
-
         address = data[0]
         forward = data[1]
         backward = data[2]

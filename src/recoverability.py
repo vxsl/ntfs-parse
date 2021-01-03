@@ -2,7 +2,6 @@ import time, os
 from math import ceil
 from shutil import disk_usage
 from threading import Lock, current_thread
-from multiprocessing import cpu_count
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc, SAMPLE_WINDOW
 from ptvsd import debug_this_thread
@@ -11,7 +10,6 @@ SECTOR_SIZE = 512
 MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
 inspection_manipulation_mutex = Lock()
 threadpool = QtCore.QThreadPool.globalInstance()
-threadpool.setMaxThreadCount(cpu_count() - 3)
 
 class Worker(QtCore.QRunnable):
 
