@@ -37,7 +37,6 @@ class PerformanceCalculator(QtCore.QObject):
         self.total_sectors_read = 0
         self.next_reset = None
 
-    @QtCore.pyqtSlot()
     def calculate_average(self):
         if self.avg > 0:
             self.avg += self.cur_sectors_read
@@ -72,7 +71,7 @@ class PerformanceCalculator(QtCore.QObject):
         """ return (self.avg / (self.sample_size)) * \
                 (self.total_sectors_to_read - self.total_sectors_read) """
         try:
-            return self.total_sectors_to_read / self.avg / DEFAULT_SAMPLE_WINDOW
+            return DEFAULT_SAMPLE_WINDOW * self.total_sectors_to_read / self.avg
         except:
             return 0
 
