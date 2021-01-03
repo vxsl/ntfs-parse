@@ -206,7 +206,6 @@ class MainWindow(QWidget):
         self.inspections_box.setLayout(self.inspections_vbox)
         self.inspections_box.hide()
         self.inspection_labels = {}
-        self.backwards_progress_bars = []
 
         # prepare inspection logic
         self.current_inspections = {}
@@ -309,74 +308,6 @@ class MainWindow(QWidget):
             event.accept()
             sys.exit()
 
-    def resizeEvent(self, event):
-        for key in self.current_inspections:
-            insp = self.current_inspections[key]
-            if insp.backwards:
-                width = insp.graphics_view.width()
-                insp.progress_bar.setMaximumWidth(width)
-                insp.progress_bar.setMinimumWidth(width)
-                insp.graphics_view.fitInView(insp.scene.sceneRect())
-                print('\n' + str(insp.progress_bar.width()))
-                print(width)
-                print(insp.scene.width())
-                print(insp.scene.sceneRect())
-
-    @QtCore.pyqtSlot(tuple)
-    def new_skim_average(self, data):
-        """Update skim performance statistics in the main window
-
-        Args:
-            data (tuple):   first element is a float representing an average skimming time for some interval.
-                            second element is an int representing the estimated skim time remaining based on this average.
-        """
-        avg = data[0] * self.job.jump_sectors
-        estimate = data[1]
-        self.sector_average.setText("Average sectors skimmed in 5 seconds: "
-            + str(int(avg)))
-        self.time.setHMS(0,0,0)
-        self.time = self.time.addSecs(estimate)
-
-    @QtCore.pyqtSlot(tuple)
-    def new_inspection_average(self, data):
-        """ Update inspection performance statistics in the main window.
-
-            Stores an individual inspection's performance data in a dictionary.
-            The slowest individual inspection dictates the overall inspection time remaining,
-            so once all current averages have been collected, a new estimated time is generated
-            and the UI is updated with that information.
-
-        Args:
-            data (tuple):   the first element is a float representing the average time for an inspection.
-                            the second element is the id string for this inspection.
-        """
-        avg = data[0]
-        id_str = data[1]
-
-        self.current_inspections[id_str].avg = avg
-        self.current_inspections[id_str].new_avg_flag = True
-
-        # if fresh averages have been collected for all current inspections,
-        if all(self.current_inspections[key].new_avg_flag == True for key in self.current_inspections):
-            # determine the slowest inspection
-            slowest_id = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
-            self.current_slowest_inspection = self.current_inspections[slowest_id]
-
-            # get the estimated seconds remaining in that inspection 
-            secs_remaining = self.current_inspections[slowest_id].estimate_fn()
-
-            # quit if no estimate is possible yet
-            if secs_remaining == '...':
-                return
-        
-            # update time remaining by resetting to 0 then adding the new estimate
-            self.time.setHMS(0,0,0)
-            self.time = self.time.addSecs(secs_remaining)
-
-            # clear the averages for the next round
-            for key in self.current_inspections:
-                self.current_inspections[key].new_avg_flag = False
-
     @QtCore.pyqtSlot(tuple)
     def initialize_inspection_gui(self, data):
         """Create and initialize two new progress bars representing close inspections in the program.
@@ -405,14 +336,9 @@ class MainWindow(QWidget):
 
         bars = QHBoxLayout()
 
-        # add backward to layout
+        # add forward to layout
         box = QVBoxLayout()
-        #graphics_view = QGraphicsView(self)
-        graphics_view = backward_gui.graphics_view
-        graphics_view.setScene(backward_gui.scene)
-        graphics_view.setStyleSheet("border:none; background: transparent")
-        graphics_view.setStyleSheet("height:0px")
-        box.addWidget(graphics_view)        
+        box.addWidget(backward_gui.progress_bar)
         box.addWidget(backward_gui.label)
         bars.addLayout(box)
 
@@ -421,15 +347,12 @@ class MainWindow(QWidget):
         box.addWidget(forward_gui.progress_bar)
         box.addWidget(forward_gui.label)
         bars.addLayout(box)
+
         self.inspection_labels[hex(address)] = QLabel(hex(address))
         self.inspection_labels[hex(address)].setStyleSheet("font-weight: bold")
         self.inspections_vbox.addWidget(self.inspection_labels[hex(address)])
         self.inspections_vbox.addLayout(bars)
         self.inspections_box.show()
-        #backward_gui.progress_bar.setStyleSheet("width:" + str(graphics_view.width()) + "px")
-
-        backward_gui.progress_bar.setMinimumWidth(graphics_view.width())
-        backward_gui.progress_bar.setMaximumWidth(graphics_view.width())
 
         self.current_inspections[forward_gui.id_str] = forward_gui
         self.current_inspections[backward_gui.id_str] = backward_gui
