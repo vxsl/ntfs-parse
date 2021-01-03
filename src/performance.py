@@ -41,8 +41,6 @@ class PerformanceCalculator(QtCore.QObject):
 
 class InspectionPerformanceCalc(QtCore.QObject):
 
-    new_average_signal = QtCore.pyqtSignal(tuple)
-
     def __init__(self, total_sectors, id_str):
         super().__init__()
         self.id_str = id_str
@@ -58,7 +56,6 @@ class InspectionPerformanceCalc(QtCore.QObject):
             self.avg = (self.avg / 2)
         else:
             self.avg += self.cur_sectors_read
-        self.new_average_signal.emit((self.avg, self.id_str))
         self.cur_sectors_read = 0
         return self.avg
 
@@ -72,4 +69,3 @@ class InspectionPerformanceCalc(QtCore.QObject):
             return SAMPLE_WINDOW * self.total_sectors_to_read / self.avg
         except ZeroDivisionError:
             return 0
-        #return (self.avg / self.sample_size) * (self.total_sectors_to_read - self.sectors_read)
