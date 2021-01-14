@@ -262,8 +262,8 @@ class MainWindow(QWidget):
             # second element is an int representing the estimated skim time remaining based on this average.
             avg = data[0] * self.job.jump_sectors
             estimate = data[1]
-            self.sector_average.setText("Average sectors skimmed in " + str(SAMPLE_WINDOW) + " seconds: "
-                + str(int(avg)))
+            self.sector_average.setText("Average sectors skimmed per " + str(SAMPLE_WINDOW) + " seconds: "
+                + str(int(avg)) + '\n(' + str(int(data[0])) + ' read)')
             self.time.setHMS(0,0,0)
             self.time = self.time.addSecs(estimate)
             return
@@ -281,12 +281,15 @@ class MainWindow(QWidget):
         secs_remaining = self.current_slowest_inspection.seconds_fn()
 
         # quit if no estimate is possible yet
-        if secs_remaining == '...':
+        if secs_remaining == 0:
             return
     
         # update time remaining by resetting to 0 then adding the new estimate
         self.time.setHMS(0,0,0)
+        try:
         self.time = self.time.addSecs(secs_remaining)
+        except:
+            pass
 
 
     @QtCore.pyqtSlot()
