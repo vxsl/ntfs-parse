@@ -520,7 +520,7 @@ class MainWindow(QWidget):
         self.job_thread.started.connect(self.job.run)
         self.job_thread.start()
 
-    @QtCore.pyqtSlot(tuple)
+    @QtCore.pyqtSlot()
     def test_run_finished(self):
         """Update UI to reflect the main program after the "loading" test run
         """
