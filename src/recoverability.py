@@ -188,7 +188,7 @@ class Job(QtCore.QObject):
     success_signal = QtCore.pyqtSignal(int)
     finished_signal = QtCore.pyqtSignal(tuple)
     test_run_progress_signal = QtCore.pyqtSignal(float)
-    test_run_finished_signal = QtCore.pyqtSignal(tuple)
+    test_run_finished_signal = QtCore.pyqtSignal()
 
     def __init__(self, vol, file, init_address):
         super().__init__()
@@ -232,13 +232,12 @@ class Job(QtCore.QObject):
         avg = skips * SAMPLE_WINDOW / test_window
         total_sectors_to_read = ceil(self.volume_size.total / self.jump_sectors)
         estimate = SAMPLE_WINDOW * total_sectors_to_read / avg
-        return (avg, estimate)
+        return avg
 
     def run(self):
-        test_run_results = self.test_run()
-        init_avg = test_run_results[0]
+        init_avg = self.test_run()
         self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, self.jump_sectors, init_avg=init_avg)
-        self.test_run_finished_signal.emit(test_run_results)
+        self.test_run_finished_signal.emit()
         self.skim_reader.read()
 
     def new_close_inspection(self, address):
