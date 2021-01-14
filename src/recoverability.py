@@ -84,7 +84,8 @@ class CloseReader(DiskReader):
             if data not in MEANINGLESS_SECTORS or self.consecutive_successes > 2:
                 threadpool.start(Worker(None, data, self.fobj.tell(), self))
             self.sector_count += 1
-            threadpool.start(Worker(self.emit_progress))
+            self.progress_signal.emit((self.perf.increment(), self.success_count / self.sector_count))
+
             time.sleep(0.01)
 
         if job.finished:
@@ -111,9 +112,6 @@ class CloseReader(DiskReader):
         del self.perf
 
         return
-
-    def emit_progress(self):
-        self.progress_signal.emit((self.perf.increment(), self.success_count / self.sector_count))
 
 class SkimReader(DiskReader):
 
