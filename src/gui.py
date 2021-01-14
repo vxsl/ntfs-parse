@@ -11,9 +11,9 @@ import sys
 # Third-party imports
 from PyQt5 import QtCore
 from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
-                            QLabel, QLineEdit, QPushButton, \
-                            QWidget, QProgressBar, QMessageBox, \
-                            QVBoxLayout, QGroupBox
+    QLabel, QLineEdit, QPushButton, \
+    QWidget, QProgressBar, QMessageBox, \
+    QVBoxLayout, QGroupBox
 
 # Local imports
 from recoverability import Job, Worker, SECTOR_SIZE, SAMPLE_WINDOW
@@ -22,8 +22,10 @@ threadpool = QtCore.QThreadPool.globalInstance()
 threadpool.setMaxThreadCount(cpu_count() - 3)
 inspection_gui_manipulation_mutex = Lock()
 
+
 class SourceFile():
     """represents information about the user's selected file that is relevant to both the UI and the main program."""
+
     def __init__(self, path):
         # the remaining sectors list will start as a list where each element represents a sector in the source file.
         self.remaining_sectors = self.to_sectors(path)
@@ -63,12 +65,14 @@ class SourceFile():
             else:
                 # zfill for final sector -- to achieve uniform sector length even
                 # when the data is less than SECTOR_SIZE
-                result.append(\
-                (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))
+                result.append(
+                    (bytes.fromhex((cur.hex()[::-1].zfill(1024)[::-1]))))
         return result
+
 
 class ChildInspection(QtCore.QObject):
     """Represents information relevant to the UI about a close inspection taking place in the main program"""
+
     def __init__(self, id_tuple, sector_limit, average_fn, seconds_fn):
         """Construct a ChildInspection object.
 
@@ -114,9 +118,10 @@ class ChildInspection(QtCore.QObject):
         # update the child inspection's info text, ex.
         # "1023/42423 sectors
         # 97.7531% success"
-        self.label.setText('{:.3f}'.format(100 * info[0]) + '% complete' \
-                            + '\n' + '{:.3f}'.format(100 * info[1]) \
-                            + "% success")
+        self.label.setText('{:.3f}'.format(100 * info[0]) + '% complete'
+                           + '\n' + '{:.3f}'.format(100 * info[1])
+                           + "% success")
+
 
 class MainWindow(QWidget):
 
@@ -128,6 +133,7 @@ class MainWindow(QWidget):
     and any close inspections that may be occurring. One input field to set
     the address at which to begin the search.
     """
+
     def __init__(self, selected_vol, path):
         """
         Main window constructor. Create all required widgets and layouts, then
@@ -161,21 +167,23 @@ class MainWindow(QWidget):
         #source_file_grid.addWidget(QLabel(self.file.dir), 1, 1)
         source_file_grid.addWidget(QLabel('D:/.../some/directory'), 1, 1)
         source_file_grid.addWidget(QLabel('Size:'), 2, 0)
-        source_file_grid.addWidget(QLabel(str(len(self.file.remaining_sectors)) \
-            + " sectors (" + str(SECTOR_SIZE * (len(self.file.remaining_sectors))) \
-            + " bytes)"), 2, 1)
+        source_file_grid.addWidget(QLabel(str(len(self.file.remaining_sectors))
+                                          + " sectors (" + str(SECTOR_SIZE * (len(self.file.remaining_sectors)))
+                                          + " bytes)"), 2, 1)
         source_file_box.setLayout(source_file_grid)
 
         # create and populate the "Reconstructed file" group box
         reconstructed_file_box = QGroupBox("Reconstructed file")
         reconstructed_file_hbox = QHBoxLayout()
         self.reconstructed_file_info = QLabel()
-        self.reconstructed_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.reconstructed_file_info.setText(("No matches yet\n\n") \
-        + ("0/" + (str(len(self.file.remaining_sectors))) \
-        + " = " + "0.00%" \
-        + "\n\nTesting equality for " + (str(len(self.file.remaining_sectors))) \
-        + " remaining sectors..."))
+        self.reconstructed_file_info.setAlignment(
+            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.reconstructed_file_info.setText(("No matches yet\n\n")
+                                             + ("0/" + (str(len(self.file.remaining_sectors)))
+                                                + " = " + "0.00%"
+                                                + "\n\nTesting equality for " +
+                                                (str(len(self.file.remaining_sectors)))
+                                                + " remaining sectors..."))
         reconstructed_file_hbox.addWidget(self.reconstructed_file_info)
         reconstructed_file_box.setLayout(reconstructed_file_hbox)
 
@@ -190,9 +198,12 @@ class MainWindow(QWidget):
         self.skim_progress_bar = QProgressBar()
         self.skim_progress_bar.setTextVisible(False)
         self.skim_percentage = QLabel()
-        self.skim_percentage.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.skim_address_button = QPushButton('Display current address in skim')
-        self.skim_address_button.clicked.connect(self.display_current_skim_address)
+        self.skim_percentage.setAlignment(
+            QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
+        self.skim_address_button = QPushButton(
+            'Display current address in skim')
+        self.skim_address_button.clicked.connect(
+            self.display_current_skim_address)
         skim_grid.addWidget(self.skim_progress_bar, 0, 0, 1, 3)
         skim_grid.addWidget(self.skim_percentage, 1, 2)
         skim_grid.addWidget(self.skim_address_button, 1, 0)
@@ -222,7 +233,8 @@ class MainWindow(QWidget):
         self.start_button = QPushButton('Start')
         self.start_button.clicked.connect(self.start)
         self.init_address_input = QLineEdit()
-        self.init_address_input.setPlaceholderText('Begin at address (default 0x0000000000)')
+        self.init_address_input.setPlaceholderText(
+            'Begin at address (default 0x0000000000)')
         init_address_hbox = QHBoxLayout()
         init_address_hbox.addWidget(self.init_address_input)
         start_hbox.addLayout(init_address_hbox)
@@ -251,14 +263,17 @@ class MainWindow(QWidget):
         # TODO create blocking condition for rapid clicks
         if hasattr(self, 'job'):
             if not self.current_inspections:
-                self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()))
+                self.skim_address_button.setText(
+                    hex(self.job.skim_reader.fobj.tell()))
             else:
-                self.skim_address_button.setText(hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
+                self.skim_address_button.setText(
+                    hex(self.job.skim_reader.fobj.tell()) + ' (paused)')
         else:
             self.skim_address_button.setText("Skim has not been started.")
 
         # QTimer singleshot resets button text after 2 seconds
-        QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText('Display current address in skim'))
+        QtCore.QTimer.singleShot(2000, lambda: self.skim_address_button.setText(
+            'Display current address in skim'))
 
     def request_averages(self):
         """.. . . . . ..  . and Update skim performance statistics in the main window
@@ -270,8 +285,8 @@ class MainWindow(QWidget):
             avg = data[0] * self.job.jump_sectors
             estimate = data[1]
             self.sector_average.setText("Average sectors skimmed per " + str(SAMPLE_WINDOW) + " seconds: "
-                + str(int(avg)) + '\n(' + str(int(data[0])) + ' read)')
-            self.time.setHMS(0,0,0)
+                                        + str(int(avg)) + '\n(' + str(int(data[0])) + ' read)')
+            self.time.setHMS(0, 0, 0)
             self.time = self.time.addSecs(estimate)
 
             return
@@ -284,7 +299,8 @@ class MainWindow(QWidget):
 
         # now that fresh averages have been collected for all current inspections,
         # determine the slowest inspection
-        slowest_id = max(self.current_inspections, key=lambda x: self.current_inspections[x].avg)
+        slowest_id = max(self.current_inspections,
+                         key=lambda x: self.current_inspections[x].avg)
         self.current_slowest_inspection = self.current_inspections[slowest_id]
 
         # get the estimated seconds remaining in that inspection
@@ -295,13 +311,12 @@ class MainWindow(QWidget):
             return
 
         # update time remaining by resetting to 0 then adding the new estimate
-        self.time.setHMS(0,0,0)
+        self.time.setHMS(0, 0, 0)
         try:
             self.time = self.time.addSecs(secs_remaining)
         except OverflowError:
             print("There has been an error with the estimated time remaining.")
         inspection_gui_manipulation_mutex.release()
-
 
     @QtCore.pyqtSlot()
     def draw_clock(self):
@@ -321,13 +336,13 @@ class MainWindow(QWidget):
             if self.current_slowest_inspection:
                 self.time = self.time.addSecs(-1)
                 time_str = self.time.toString("h:mm:ss")
-                self.time_label.setText("Average sectors parsed in " + \
-                    str(SAMPLE_WINDOW) + " seconds: " + \
-                    "{:.2f}".format(self.current_slowest_inspection.avg) + \
-                    "\n" + time_str + " remaining to finish current close inspections.\n")
+                self.time_label.setText("Average sectors parsed in " +
+                                        str(SAMPLE_WINDOW) + " seconds: " +
+                                        "{:.2f}".format(self.current_slowest_inspection.avg) +
+                                        "\n" + time_str + " remaining to finish current close inspections.\n")
             else:
-                self.time_label.setText(self.time.toString("h:mm:ss") + \
-                    " remaining in skim (paused)... calculating time remaining in close inspection(s).")
+                self.time_label.setText(self.time.toString("h:mm:ss") +
+                                        " remaining in skim (paused)... calculating time remaining in close inspection(s).")
         else:
             self.time = self.time.addSecs(-1)
             time_str = self.time.toString("h:mm:ss")
@@ -339,7 +354,7 @@ class MainWindow(QWidget):
         if hasattr(self, 'job'):
             if not self.job.finished:
                 reply = QMessageBox.question(self, 'Window Close', 'Searching is not finished. Are you sure you want to close the window?',
-                        QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
                 if reply == QMessageBox.Yes:
                     event.accept()
@@ -369,8 +384,10 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setFormat("Paused")
 
         # create ChildInspection objects
-        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit, forward.perf.calculate_average, forward.perf.get_remaining_seconds)
-        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit, backward.perf.calculate_average, backward.perf.get_remaining_seconds)
+        forward_gui = ChildInspection(forward.id_tuple, forward.sector_limit,
+                                      forward.perf.calculate_average, forward.perf.get_remaining_seconds)
+        backward_gui = ChildInspection(backward.id_tuple, backward.sector_limit,
+                                       backward.perf.calculate_average, backward.perf.get_remaining_seconds)
         forward_gui.sibling = backward_gui
         backward_gui.sibling = forward_gui
 
@@ -402,8 +419,10 @@ class MainWindow(QWidget):
         # connect signals to slots
         forward.progress_signal.connect(forward_gui.update)
         backward.progress_signal.connect(backward_gui.update)
-        forward.finished_signal.connect(lambda success_rate: self.child_inspection_finished(forward_gui, success_rate))
-        backward.finished_signal.connect(lambda success_rate: self.child_inspection_finished(backward_gui, success_rate))
+        forward.finished_signal.connect(
+            lambda success_rate: self.child_inspection_finished(forward_gui, success_rate))
+        backward.finished_signal.connect(
+            lambda success_rate: self.child_inspection_finished(backward_gui, success_rate))
 
     def child_inspection_finished(self, reader, success_rate):
         """Clean up after a child inspection has completed.
@@ -422,9 +441,11 @@ class MainWindow(QWidget):
 
         # if both the backward and forward inspection have finished, finalize entire section
         if reader.sibling.finished:
-            overall_success_rate = (reader.success_rate + reader.sibling.success_rate) / 2
+            overall_success_rate = (
+                reader.success_rate + reader.sibling.success_rate) / 2
             text = self.inspection_labels[reader.address].text()
-            self.inspection_labels[reader.address].setText(text + " [completed, " + "{:.2f}".format(overall_success_rate * 100) + "% success]")
+            self.inspection_labels[reader.address].setText(
+                text + " [completed, " + "{:.2f}".format(overall_success_rate * 100) + "% success]")
 
         # this inspection should no longer be included in various calculations, so delete the reference
         del self.current_inspections[reader.id_str]
@@ -439,7 +460,7 @@ class MainWindow(QWidget):
                     label_list.append(widget)
             except AttributeError:
                 pass
-        label_list = label_list[:5] # get the first 5 labels
+        label_list = label_list[:5]  # get the first 5 labels
         for i in reversed(range(self.inspections_vbox.count())):
             try:
                 widget = self.inspections_vbox.itemAt(i).widget()
@@ -451,7 +472,6 @@ class MainWindow(QWidget):
                         widget.setParent(None)
             except AttributeError:
                 pass
-
 
     @QtCore.pyqtSlot()
     def start(self):
@@ -484,13 +504,13 @@ class MainWindow(QWidget):
         # validate the input
         validated_start_address = validate_hex(user_input)
 
-        #handle invalid:
+        # handle invalid:
         if validated_start_address is None:
             msg = QMessageBox()
             msg.setIcon(QMessageBox.Warning)
             msg.setText(user_input + ' is not a valid address.')
-            msg.setInformativeText('Please enter a value between 0x0 and ' \
-                + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
+            msg.setInformativeText('Please enter a value between 0x0 and '
+                                   + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
             msg.setStandardButtons(QMessageBox.Ok)
             msg.exec()
             return
@@ -510,11 +530,14 @@ class MainWindow(QWidget):
         # connect the Job's various signals to appropriate slots
         self.job.success_signal.connect(self.file_gui_update)
         self.job.finished_signal.connect(self.job_finished)
-        self.job.test_run_progress_signal.connect(self.skim_progress_bar.setValue)
+        self.job.test_run_progress_signal.connect(
+            self.skim_progress_bar.setValue)
         self.job.test_run_finished_signal.connect(self.test_run_finished)
-        self.job.skim_reader.new_inspection_signal.connect(self.initialize_inspection_gui)
+        self.job.skim_reader.new_inspection_signal.connect(
+            self.initialize_inspection_gui)
         self.job.skim_reader.progress_signal.connect(self.skim_gui_update)
-        self.job.skim_reader.resuming_signal.connect(lambda: self.skim_progress_bar.setTextVisible(False))
+        self.job.skim_reader.resuming_signal.connect(
+            lambda: self.skim_progress_bar.setTextVisible(False))
 
         # run the main program
         self.job_thread.started.connect(self.job.run)
@@ -555,7 +578,8 @@ class MainWindow(QWidget):
         # populate the final dialog with appropriate information dependent on the success of the job.
         if success:
             text = 'Finished: output written to ' + self.job.rebuilt_file_path + '\n\n'
-            text = 'Finished: output written to ' + '/.../some-file [reconstructed using sectors from D].mp4' + '\n\n'
+            text = 'Finished: output written to ' + \
+                '/.../some-file [reconstructed using sectors from D].mp4' + '\n\n'
             if auto_filled > 0:
                 text += str(auto_filled) + ' meaningless sectors were auto-filled (' \
                     + "{:.6f}".format(auto_filled / self.job.total_sectors) \
@@ -564,9 +588,9 @@ class MainWindow(QWidget):
                 text += 'No meaningless sectors were auto-filled.'
         else:
             text = 'Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, ' \
-                    + 'or you have chosen a file that did not previously exist on the volume.\n\n' \
-                    + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
-                    + "% of the file was able to be reconstructed using sectors from this volume."
+                + 'or you have chosen a file that did not previously exist on the volume.\n\n' \
+                + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
+                + "% of the file was able to be reconstructed using sectors from this volume."
 
         # show the final dialog
         finished_dialog.setText(text)
@@ -581,15 +605,18 @@ class MainWindow(QWidget):
         Args:
             i (int): last matched sector of source file
         """
-        self.reconstructed_file_info.setText(("Last match: sector " + str(i) + "\n\n") \
-        + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors) \
-        + " = " + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
-        + "%\n\nTesting equality for " + str(self.job.total_sectors - self.job.done_sectors) \
-        + " remaining sectors..."))
+        self.reconstructed_file_info.setText(("Last match: sector " + str(i) + "\n\n")
+                                             + (str(self.job.done_sectors) + "/" + str(self.job.total_sectors)
+                                                + " = " +
+                                                "{:.2f}".format(
+                                                    100 * self.job.done_sectors / self.job.total_sectors)
+                                                + "%\n\nTesting equality for " +
+                                                str(self.job.total_sectors -
+                                                    self.job.done_sectors)
+                                                + " remaining sectors..."))
 
     @QtCore.pyqtSlot(float)
     def skim_gui_update(self, progress):
         """Update information shown in the "Skim" area of the main window."""
         self.skim_percentage.setText("{:.8f}".format(progress * 100) + "%")
         self.skim_progress_bar.setValue(progress * 100)
-
