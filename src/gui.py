@@ -17,6 +17,7 @@ from recoverability import Job, Worker, SECTOR_SIZE, SAMPLE_WINDOW
 
 threadpool = QtCore.QThreadPool.globalInstance()
 threadpool.setMaxThreadCount(cpu_count() - 3)
+inspection_gui_manipulation_mutex = Lock()
 
 class SourceFile():
     """represents information about the user's selected file that is relevant to both the UI and the main program."""
@@ -266,7 +267,10 @@ class MainWindow(QWidget):
                 + str(int(avg)) + '\n(' + str(int(data[0])) + ' read)')
             self.time.setHMS(0,0,0)
             self.time = self.time.addSecs(estimate)
+            
             return
+
+        inspection_gui_manipulation_mutex.acquire()
 
         for key in self.current_inspections:
             insp = self.current_inspections[key]
@@ -290,6 +294,7 @@ class MainWindow(QWidget):
         self.time = self.time.addSecs(secs_remaining)
         except:
             pass
+        inspection_gui_manipulation_mutex.release()
 
 
     @QtCore.pyqtSlot()
@@ -388,6 +393,7 @@ class MainWindow(QWidget):
         backward.finished_signal.connect(lambda success_rate: self.child_inspection_finished(backward_gui, success_rate))
 
     def child_inspection_finished(self, reader, success_rate):
+        inspection_gui_manipulation_mutex.acquire()
         reader.success_rate = success_rate
         reader.progress_bar.setParent(None)
         reader.label.setParent(None)
@@ -398,6 +404,7 @@ class MainWindow(QWidget):
             self.inspection_labels[reader.address].setText(text + " [completed, " + "{:.2f}".format(overall_success_rate * 100) + "% success]")
 
         del self.current_inspections[reader.id_str]
+        inspection_gui_manipulation_mutex.release()
 
         label_list = []
         for i in reversed(range(self.inspections_vbox.count())):
