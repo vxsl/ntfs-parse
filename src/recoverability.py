@@ -206,7 +206,7 @@ class Job(QtCore.QObject):
         self.total_sectors = len(file.remaining_sectors)
         self.jump_sectors = self.total_sectors // 2
         self.skim_reader = SkimReader(self.disk_path, self.jump_sectors, init_address)
-        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using data from " + vol + "]." + self.file.name.split('.')[1]
+        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using sectors from " + vol + "]." + self.file.name.split('.')[1]
 
 
     def test_run(self):

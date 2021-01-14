@@ -163,7 +163,7 @@ class MainWindow(QWidget):
         reconstructed_file_hbox = QHBoxLayout()
         self.reconstructed_file_info = QLabel()
         self.reconstructed_file_info.setAlignment(QtCore.Qt.AlignRight | QtCore.Qt.AlignVCenter)
-        self.reconstructed_file_info.setText(("No matches\n\n") \
+        self.reconstructed_file_info.setText(("No matches yet\n\n") \
         + ("0/" + (str(len(self.file.remaining_sectors))) \
         + " = " + "0.00%" \
         + "\n\nTesting equality for " + (str(len(self.file.remaining_sectors))) \
@@ -503,15 +503,19 @@ class MainWindow(QWidget):
         finished_dialog.setWindowTitle('recoverability')
         finished_dialog.setIcon(QMessageBox.Warning)
         if success:
+            text = 'Finished: output written to ' + self.job.rebuilt_file_path + '\n\n'
             if auto_filled > 0:
-                finished_dialog.setText('Finished: output written to ' + self.job.rebuilt_file_path + '\n\n' + str(auto_filled) \
-                    + ' meaningless sectors were auto-filled (' + "{:.6f}".format(auto_filled / self.job.total_sectors) \
-                    + '%)')
+                text += str(auto_filled) + ' meaningless sectors were auto-filled (' \
+                    + "{:.6f}".format(auto_filled / self.job.total_sectors) \
+                    + '%)'
             else:
-                finished_dialog.setText('Finished: output written to ' + self.job.rebuilt_file_path + '\n\n' \
-                    + 'No meaningless sectors were auto-filled.')
+                text += 'No meaningless sectors were auto-filled.'
         else:
-            finished_dialog.setText('Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, or you have chosen a file that did not previously exist on the volume.\n\n' + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) + "% of the file was able to be reconstructed using data from this volume.")
+            text = 'Sorry, your file was not successfully rebuilt. Perhaps your volume is unrecoverable, ' \
+                    + 'or you have chosen a file that did not previously exist on the volume.\n\n' \
+                    + "{:.2f}".format(100 * self.job.done_sectors / self.job.total_sectors) \
+                    + "% of the file was able to be reconstructed using sectors from this volume."
+        finished_dialog.setText(text)
         finished_dialog.setStandardButtons(QMessageBox.Ok)
         finished_dialog.exec()
 
