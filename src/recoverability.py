@@ -1,18 +1,20 @@
-import time, os
-from math import ceil
+import time
+import os
 from shutil import disk_usage
 from threading import Lock, current_thread
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc, SAMPLE_WINDOW
-from ptvsd import debug_this_thread
 
+# constants
 SECTOR_SIZE = 512
 MEANINGLESS_SECTORS = [b'\x00' * SECTOR_SIZE, b'\xff' * SECTOR_SIZE]
+
+# globals
 inspection_manipulation_mutex = Lock()
 threadpool = QtCore.QThreadPool.globalInstance()
 
 class Worker(QtCore.QRunnable):
-
+    
     def __init__(self, fn, *args):
         super(Worker, self).__init__()
 
@@ -151,7 +153,7 @@ class SkimReader(DiskReader):
             start_at = self.init_address
         current_thread().name = "Skim thread"
         self.fobj.seek(start_at)
-        
+
         while True:
             data = self.fobj.read(SECTOR_SIZE)
             if self.inspections or job.finished or not data \
@@ -225,13 +227,11 @@ class Job(QtCore.QObject):
             skips += 1
             progress = (time.perf_counter() - start) / test_window
             if progress >= 1:
-                break            
+                break
             self.test_run_progress_signal.emit(100 * progress)
             self.skim_reader.fobj.seek(self.skim_reader.jump_size, 1)
 
         avg = skips * SAMPLE_WINDOW / test_window
-        total_sectors_to_read = ceil(self.volume_size.total / self.jump_sectors)
-        estimate = SAMPLE_WINDOW * total_sectors_to_read / avg
         return avg
 
     def run(self):

@@ -1,5 +1,3 @@
-from time import perf_counter
-from datetime import timedelta
 from math import ceil
 from PyQt5 import QtCore
 
@@ -26,7 +24,7 @@ class PerformanceCalculator(QtCore.QObject):
             self.avg += self.cur_sectors_read
         self.cur_sectors_read = 0
         return (self.avg, self.get_remaining_seconds())
-    
+
     def get_remaining_seconds(self):
         try:
             return SAMPLE_WINDOW * self.total_sectors_to_read / self.avg
