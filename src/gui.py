@@ -576,8 +576,6 @@ class MainWindow(QWidget):
         # populate the final dialog with appropriate information dependent on the success of the job.
         if success:
             text = 'Finished: output written to ' + self.job.rebuilt_file_path + '\n\n'
-            text = 'Finished: output written to ' + \
-                '/.../some-file [reconstructed using sectors from D].mp4' + '\n\n'
             if auto_filled > 0:
                 text += str(auto_filled) + ' meaningless sectors were auto-filled (' \
                     + "{:.6f}".format(auto_filled / self.job.total_sectors) \
