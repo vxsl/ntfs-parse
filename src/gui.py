@@ -14,6 +14,7 @@ from PyQt5.QtWidgets import QGridLayout, QHBoxLayout, \
     QLabel, QLineEdit, QPushButton, \
     QWidget, QProgressBar, QMessageBox, \
     QVBoxLayout, QGroupBox
+from wmi import WMI
 
 # Local imports
 from recoverability import Job, Worker, SECTOR_SIZE, SAMPLE_WINDOW
@@ -152,7 +153,12 @@ class MainWindow(QWidget):
 
         # store information from previous dialog
         self.file = SourceFile(path)
-        self.selected_vol = selected_vol
+        if selected_vol.isnumeric():
+            self.vol_path = '\\\\.\\PhysicalDrive' + selected_vol
+            self.vol_size = int((WMI().Win32_DiskDrive(Index=selected_vol))[0].size)
+        else:
+            self.vol_path = r"\\." + "\\" + selected_vol + ":"
+            self.vol_size = disk_usage(selected_vol + ':\\').total
 
         # begin creating UI elements. Those that will need to be accessed or modified elsewhere in the program
         # are stored as attributes to the MainWindow object.
@@ -486,7 +492,7 @@ class MainWindow(QWidget):
             """
             # TODO check for valid fobj seek with addr
             try:
-                if 0 <= int(inp, 16) <= disk_usage(self.selected_vol + ':\\').total:
+                if 0 <= int(inp, 16) <= self.vol_size:
                     return int(inp, 16)
                 else:
                     return None
@@ -508,7 +514,7 @@ class MainWindow(QWidget):
             msg.setIcon(QMessageBox.Warning)
             msg.setText(user_input + ' is not a valid address.')
             msg.setInformativeText('Please enter a value between 0x0 and '
-                                   + str(hex(disk_usage(self.selected_vol + ':\\').total).upper() + '.'))
+                                   + str(hex(self.vol_size).upper() + '.'))
             msg.setStandardButtons(QMessageBox.Ok)
             msg.exec()
             return
@@ -522,7 +528,7 @@ class MainWindow(QWidget):
         self.skim_progress_bar.setAlignment(QtCore.Qt.AlignCenter)
 
         # initialize main program's Job object in its own QThread. This will be the powerhouse of the program.
-        self.job = Job(self.selected_vol, self.file, validated_start_address)
+        self.job = Job(self.vol_path, self.vol_size, self.file, validated_start_address)
         self.job.moveToThread(self.job_thread)
 
         # connect the Job's various signals to appropriate slots

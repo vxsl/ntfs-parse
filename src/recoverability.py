@@ -1,6 +1,5 @@
 import time
 import os
-from shutil import disk_usage
 from threading import Lock, current_thread
 from PyQt5 import QtCore
 from performance import PerformanceCalculator, InspectionPerformanceCalc, SAMPLE_WINDOW
@@ -52,9 +51,9 @@ class Worker(QtCore.QRunnable):
         return
 
 class DiskReader(QtCore.QObject):
-    def __init__(self, disk_path):
+    def __init__(self, vol_path):
         super().__init__()
-        self.fobj = os.fdopen(os.open(disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
+        self.fobj = os.fdopen(os.open(vol_path, os.O_RDONLY | os.O_BINARY), 'rb')
 
 class CloseReader(DiskReader):
 
@@ -62,7 +61,7 @@ class CloseReader(DiskReader):
     finished_signal = QtCore.pyqtSignal(float)
 
     def __init__(self, start_at, backward=False):
-        super().__init__(job.disk_path)
+        super().__init__(job.vol_path)
         self.start_at = start_at
         self.sector_limit = job.total_sectors // 2
         self.sector_count = 0
@@ -121,8 +120,8 @@ class SkimReader(DiskReader):
     progress_signal = QtCore.pyqtSignal(float)
     resuming_signal = QtCore.pyqtSignal()
 
-    def __init__(self, disk_path, jump_sectors, init_address):
-        super().__init__(disk_path)
+    def __init__(self, vol_path, jump_sectors, init_address):
+        super().__init__(vol_path)
         self.jump_size = jump_sectors * SECTOR_SIZE
         self.inspections = []
         self.resume_at = None
@@ -192,7 +191,7 @@ class Job(QtCore.QObject):
     test_run_progress_signal = QtCore.pyqtSignal(float)
     test_run_finished_signal = QtCore.pyqtSignal()
 
-    def __init__(self, vol, file, init_address):
+    def __init__(self, vol_path, vol_size, file, init_address):
         super().__init__()
 
         global job
@@ -201,14 +200,15 @@ class Job(QtCore.QObject):
         self.finished = False
         self.dir_name = 'recoverability/' + time.ctime().replace(":", '_')
         os.makedirs(self.dir_name, mode=0o755)
-        self.disk_path = r"\\." + "\\" + vol + ":"
-        self.volume_size = disk_usage(vol + ':\\')
+        self.vol_path = vol_path
+        self.vol_size = vol_size
         self.file = file
         self.done_sectors = 0
         self.total_sectors = len(file.remaining_sectors)
         self.jump_sectors = self.total_sectors // 2
-        self.skim_reader = SkimReader(self.disk_path, self.jump_sectors, init_address)
-        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using sectors from " + vol + "]." + self.file.name.split('.')[1]
+        self.skim_reader = SkimReader(self.vol_path, self.jump_sectors, init_address)
+        friendly_vol_path = vol_path.replace(':', '').replace('/', '').replace('\\', '').replace('.', '')
+        self.rebuilt_file_path = self.dir_name + '/' + self.file.name.split('.')[0] + " [reconstructed using sectors from " + friendly_vol_path + "]." + self.file.name.split('.')[1]
 
 
     def test_run(self):
@@ -236,7 +236,7 @@ class Job(QtCore.QObject):
 
     def run(self):
         init_avg = self.test_run()
-        self.skim_reader.perf = PerformanceCalculator(self.volume_size.total, self.skim_reader.jump_size, self.jump_sectors, init_avg=init_avg)
+        self.skim_reader.perf = PerformanceCalculator(self.vol_size, self.skim_reader.jump_size, self.jump_sectors, init_avg=init_avg)
         self.test_run_finished_signal.emit()
         self.skim_reader.read()
 
@@ -262,7 +262,7 @@ class Job(QtCore.QObject):
                 job.file.remaining_sectors[i] = None
                 auto_filled += 1
 
-        fobj = os.fdopen(os.open(self.disk_path, os.O_RDONLY | os.O_BINARY), 'rb')
+        fobj = os.fdopen(os.open(self.vol_path, os.O_RDONLY | os.O_BINARY), 'rb')
         out_file = open(self.rebuilt_file_path, 'wb')
         for addresses in job.file.address_table:
             fobj.seek(addresses[0])

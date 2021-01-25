@@ -1,5 +1,6 @@
 import string
 import os
+import re
 from PyQt5.QtWidgets import QMessageBox, QFileDialog, QDialog, \
     QHBoxLayout, QLabel, QComboBox, QDialogButtonBox, QVBoxLayout, \
     QApplication, QCheckBox
@@ -42,7 +43,7 @@ class StartDialog(QDialog):
     def render_vols(self):
         if self.include_raw.isChecked():
             vols = ['%s:' % v for v in string.ascii_uppercase if os.path.exists('%s:' % v)]
-            vols += ['Raw disk %s' % d for d in range(50) if os.path.exists('\\\\.\\PhysicalDrive%s' % d)]
+            vols += ['\\\\.\\PhysicalDrive%s' % d for d in range(50) if os.path.exists('\\\\.\\PhysicalDrive%s' % d)]
         else:
             vols = ['%s:' % v for v in string.ascii_uppercase if os.path.exists('%s:' % v)]
 
@@ -56,7 +57,13 @@ file_select = ChooseSourceFileDialog()
 
 while True:
     disk_select.exec()
-    selected_vol = disk_select.vol_select_dropdown.currentText()[0]
+    selected_vol = disk_select.vol_select_dropdown.currentText()
+    if len(selected_vol) is 2:
+        selected_vol = selected_vol[0]
+    elif 'PhysicalDrive' in selected_vol:
+        selected_vol = re.search(r'\d+', selected_vol).group()
+    else:
+        raise Exception('Something went wrong.')    
     file_select.exec()
     path = file_select.selectedFiles()[0]
     if os.stat(path).st_size > 100000000:
